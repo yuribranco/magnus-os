@@ -57,8 +57,8 @@ magnus-os/
 | Skill | O que faz |
 |---|---|
 | `competitive-scraping` | Análise de concorrente com lente Magnus |
-| `schwartz-headline` | Gera headlines nos 5 níveis × 5 sofisticação |
-| `magnus-playbook-router` | Sugere playbook (FOMO/Meteórico/Transition/Low-Ticket) |
+| `ba` | Breakthrough Advertising completo (Eugene Schwartz) — diagnostica + escreve copy de qualquer formato |
+| `schwartz-headline` | Atalho pra gerar variações de headline nos 5 níveis de awareness |
 | `briefing-avatar` | Briefing de avatar pelo método Magnus |
 
 ## Próximas aulas

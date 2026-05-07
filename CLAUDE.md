@@ -30,8 +30,8 @@ Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 
 ## Skill Index (top-level)
 - `/competitive-scraping <url>` — análise de concorrente com lente Magnus
-- `/schwartz-headline` — gera headlines nos 5 níveis × 5 sofisticação
-- `/magnus-playbook-router` — sugere playbook pro cenário
+- `/ba` — Breakthrough Advertising (Eugene Schwartz): diagnostica + escreve copy de qualquer formato (headline, VSL, página, email, ad) usando 3 perguntas: mass desire + awareness + sophistication
+- `/schwartz-headline` — atalho pra gerar variações de headline nos 5 níveis de awareness
 - `/briefing-avatar` — briefing de avatar pelo método Magnus
 
 ## Workflow Pattern (pra qualquer pedido não-trivial)
