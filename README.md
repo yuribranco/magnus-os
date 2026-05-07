@@ -5,36 +5,44 @@ e playbooks pra transformar você de operador num operador multiplicado.
 
 ## Pré-requisitos
 
-- Claude Pro ou Max (Free não funciona)
-- Claude Desktop instalado (claude.ai/download)
-- Node 18+
+- Conta Claude Pro ou Max (Free não funciona)
+- Cursor instalado (https://cursor.com/download)
+- Node 18+ (https://nodejs.org)
 - Git
-- Mac, Linux ou Windows com WSL/Git
+- Mac ou Windows
 
 ## Instalação
 
+> Recomendado durante a Aula 1: você não precisa rodar `git clone` manual.
+> Cria uma pasta vazia, abre o Cursor nela, instala o Claude Code e PEDE
+> pro Claude clonar este repositório + configurar tudo. Ver Bloco 3 da
+> landing pra o prompt exato.
+
+Modo manual (se preferir):
+
 1. Clone o kit:
    ```bash
-   git clone <url-do-repo> magnus-os
+   git clone https://github.com/yuribranco/magnus-os
    cd magnus-os
    ```
 
-2. Configure suas credenciais (na Aula 2):
-   ```bash
-   cp .env.example .env
-   # depois edite .env com suas credenciais — instruções na Aula 2
-   ```
+2. Personalize seu DNA:
+   - Abre `business-brain.md`
+   - Preenche os 4 slots: ICP, ofertas, voice, regra-âncora
+   - Salva
 
-3. Personalize seu DNA:
-   - Abra `business-brain.md`
-   - Preencha os 4 slots: ICP, ofertas, voice, regra-âncora
-   - Salve
+3. Abre o Cursor na pasta `magnus-os/`, abre o terminal integrado (Ctrl+`),
+   roda `claude` (autentica no browser na primeira vez)
 
-4. Abra Claude Desktop, vai em "Code", aponte pra pasta `magnus-os/`
-
-5. Teste:
+4. Testa:
    ```
    /competitive-scraping https://exemplo.com
+   ```
+
+5. Configurar credenciais MCP (Aula 2):
+   ```bash
+   cp .env.example .env
+   # editar .env com credenciais — instruções na Aula 2
    ```
 
 ## Estrutura
@@ -71,4 +79,8 @@ magnus-os/
 
 - Canal Magnus: [link no canal]
 - Office hours: 1 sem após cada aula
-- Travou? Posta no canal — cohort + equipe disponível.
+- Travou? Posta no canal — comunidade Magnus + equipe disponível.
+
+## Landing da Imersão
+
+https://magnus.yuribranco.com.br/magnusos

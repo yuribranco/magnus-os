@@ -6,7 +6,8 @@ Todo processo repetitivo do negócio vira skill. Todo dado externo vira MCP.
 Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 
 ## Stack
-- Claude Code (Desktop default; Warp/CLI opcional)
+- Claude Code rodando dentro do terminal do Cursor (default da imersão).
+  Warp / terminal nativo / CLI puro também funcionam — todos leem do mesmo `~/.claude/`.
 - Output style: Magnus (ativado na Aula 3)
 - Idioma default: Português Brasil
 - MCPs ativos: ver `.mcp.json` (ativados na Aula 2)
