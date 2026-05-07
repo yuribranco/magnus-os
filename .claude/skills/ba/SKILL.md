@@ -5,6 +5,19 @@ description: Use when writing, reviewing, diagnosing, or rescuing ad copy — VS
 
 # /ba — Breakthrough Advertising (Eugene Schwartz)
 
+## Step 0 — Read business-brain.md (REQUIRED if running inside a Magnus project)
+
+If a `business-brain.md` exists at the project root, **read it first**. Extract:
+
+- **ICP** → calibrates who the copy is FOR (mass desire detection starts here)
+- **Top 3 offers** → which offer is this copy serving? Each has different awareness/sophistication context.
+- **Voice (3 always + 3 never)** → all generated copy must respect these rules. Headlines, leads, CTAs all stay within voice.
+- **Anchor rule** → if it says "always declare Schwartz awareness in comment", every output must comply.
+
+If `business-brain.md` has placeholders unfilled, ask the user to fill them before generating copy. Without it, output is generic and disconnected from the real business.
+
+If running outside a Magnus project (no business-brain.md present), proceed normally with the diagnostic workflow below.
+
 ## Overview
 
 **Advertising does not create desire. It channels pre-existing mass desire onto a product.** This is the single most load-bearing idea in the book, and it governs every decision downstream.

@@ -8,17 +8,25 @@ allowed-tools: Read, Write, WebFetch
 
 Quando o usuário pede briefing de avatar ou pesquisa de público:
 
-## Passo 1 — Coletar contexto
+## Passo 0 — Calibrar pelo negócio (OBRIGATÓRIO)
 
-Antes de gerar, pergunte (se não dado):
+Lê `@business-brain.md` (raiz do projeto). Extrai:
+- **ICP** → ponto de partida do avatar. O avatar é uma versão personificada/aprofundada do ICP declarado.
+- **Top 3 ofertas** → o avatar é específico pra qual oferta? (avatar de R$ 47 ≠ avatar de R$ 12.000)
+- **Voice (sempre/nunca)** → as descrições do avatar (dor, desejo, identidade aspiracional) DEVEM ser escritas no tom de voice da empresa.
+- **Regra-âncora** → estrutura do output respeita a regra principal.
 
-- Produto / oferta principal
-- Ticket
+Se algum slot do business-brain estiver com placeholder, peça pra preencher antes de gerar avatar — caso contrário, avatar sai genérico e desconectado do negócio real.
+
+## Passo 1 — Coletar contexto adicional
+
+Depois do Passo 0, pergunte (se não dado):
+
+- Qual das 3 ofertas do business-brain este avatar atende?
 - Canal primário (Meta Ads, orgânico, indicação, etc)
 - 1-2 clientes reais (perfil, dor, transformação alcançada)
 
 Se aluno tem clientes documentados em `clients/<slug>/`, leia primeiro.
-Lê também `business-brain.md` pra calibrar voice + ICP.
 
 ## Passo 2 — Gerar avatar pelo método Magnus
 

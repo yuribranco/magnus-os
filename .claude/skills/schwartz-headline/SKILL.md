@@ -8,12 +8,21 @@ allowed-tools: Read, Write
 
 Quando o usuário pede headline ou variação:
 
-## Passo 1 — Coletar contexto
+## Passo 0 — Calibrar pelo negócio (OBRIGATÓRIO)
 
-Antes de gerar, pergunte (se não dado):
+Lê `@business-brain.md` (raiz do projeto). Extrai:
+- **ICP** → headlines falam pra esse público específico
+- **Top 3 ofertas** → identifica se a headline é pra qual oferta (e ticket informa a sofisticação esperada)
+- **Voice (sempre/nunca)** → AS HEADLINES DEVEM RESPEITAR a voice. Se voice diz "nunca usar 'descubra como'", essas variações NÃO podem aparecer.
+- **Regra-âncora** → se for "Schwartz First", headlines obrigatoriamente declaram awareness no comment.
 
-- Produto / oferta
-- ICP (1 frase)
+Se algum slot do business-brain estiver com placeholder, peça ao usuário pra preencher antes de gerar — caso contrário, headlines saem genéricas.
+
+## Passo 1 — Coletar contexto adicional
+
+Depois do Passo 0, pergunte (se não dado):
+
+- Produto / oferta (qual das 3 do business-brain?)
 - Mecanismo único (se existe)
 - Canal (page hero, ad, email subject, etc)
 

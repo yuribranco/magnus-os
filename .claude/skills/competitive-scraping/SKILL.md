@@ -8,6 +8,16 @@ allowed-tools: WebFetch, WebSearch, Read, Write
 
 Quando o usuário fornece URL de concorrente ou pede análise competitiva:
 
+## Passo 0 — Calibrar pelo negócio (OBRIGATÓRIO antes de tudo)
+
+Lê `@business-brain.md` (raiz do projeto). Extrai:
+- **ICP** do operador → vai contextualizar a comparação ("esse concorrente atende meu ICP ou outro?")
+- **Top 3 ofertas** → vai mapear se concorrente tem ofertas equivalentes / superiores / inferiores
+- **Voice** (sempre/nunca) → calibra o TOM da análise (não escreve "descubra o segredo" se voice diz nunca)
+- **Regra-âncora** → guia a recomendação final (ex: se regra é "Schwartz First", os gaps Magnus saem em formato Schwartz)
+
+Se `business-brain.md` não estiver preenchido (placeholders ainda lá), avisa o usuário **antes** de prosseguir: *"O business-brain.md ainda tem placeholders. A análise sai genérica sem ele. Quer preencher antes ou seguir genérico?"*
+
 ## Passo 1 — Coleta
 
 1. Faça WebFetch da URL fornecida (homepage)

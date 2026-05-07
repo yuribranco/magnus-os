@@ -13,9 +13,16 @@ Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 - Skills ativas: ver `.claude/skills/`
 - Subagentes ativos: ver `.claude/agents/` (criados na Aula 3)
 
-## Critical Files (sempre ler antes de gerar conteúdo)
-- `@business-brain.md` — DNA do negócio (ICP, ofertas, voice, regra-âncora)
-- `@learnings.md` — lições acumuladas (autocompleta via hook na Aula 3)
+## Critical Files (LEITURA OBRIGATÓRIA antes de gerar qualquer output)
+
+**Toda skill que produz conteúdo (copy, análise, briefing, headline, debriefing) DEVE ler estes arquivos antes de gerar output. Sem isso, a skill produz output genérico, não calibrado pro negócio.**
+
+- `@business-brain.md` — DNA do negócio. Skills consultam pra:
+  - **ICP**: pra direcionar copy / análise pro público certo
+  - **Ofertas**: pra contextualizar produto + ticket + diferencial
+  - **Voice (3 sempre + 3 nunca)**: pra calibrar tom de qualquer texto gerado
+  - **Regra-âncora**: pra respeitar o axioma do negócio (ex: "sempre Schwartz", "sempre 1 CTA único")
+- `@learnings.md` — lições acumuladas (preenchido via hook na Aula 3)
 
 ## Operating Rules
 1. **Schwartz First.** Toda copy declara awareness level (1–5) e
