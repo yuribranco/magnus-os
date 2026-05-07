@@ -1,0 +1,27 @@
+{
+  "_comment": "MCPs comentados (underscore prefix) — serão ativados na Aula 2. Pra ativar, remova o underscore do nome do servidor.",
+  "mcpServers": {
+    "_magnus-mentor": {
+      "command": "npx",
+      "args": ["-y", "@magnus/mentor"],
+      "env": { "MAGNUS_TOKEN": "${MAGNUS_TOKEN}" }
+    },
+    "_gmail": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/gmail-mcp"]
+    },
+    "_drive": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/drive-mcp"]
+    },
+    "_hotmart": {
+      "command": "npx",
+      "args": ["-y", "@theyahia/hotmart-mcp"],
+      "env": {
+        "HOTMART_CLIENT_ID": "${HOTMART_CLIENT_ID}",
+        "HOTMART_CLIENT_SECRET": "${HOTMART_CLIENT_SECRET}",
+        "HOTMART_BASIC": "${HOTMART_BASIC}"
+      }
+    }
+  }
+}

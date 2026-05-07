@@ -1,0 +1,27 @@
+# Credenciais — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# Dependências
+node_modules/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Outputs sensíveis dos clientes
+clients/*/deliverables/
+clients/*/research/
+
+# Materiais privados do Yuri (não vão pro cohort)
+.docs-private/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+*.swp
