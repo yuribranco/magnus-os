@@ -6,9 +6,9 @@
       "args": ["-y", "@magnus/mentor"],
       "env": { "MAGNUS_TOKEN": "${MAGNUS_TOKEN}" }
     },
-    "_gmail": {
+    "gmail": {
       "command": "npx",
-      "args": ["-y", "@anthropic/gmail-mcp"]
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
     },
     "_drive": {
       "command": "npx",
