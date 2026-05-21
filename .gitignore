@@ -27,3 +27,4 @@ npm-debug.log*
 *.swp
 .gstack/
 .claude/worktrees/
+.superpowers/
