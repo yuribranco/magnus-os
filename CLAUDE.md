@@ -39,7 +39,7 @@ Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 ## Skill Index (top-level)
 - `/competitive-scraping <url>` — análise de concorrente com lente Magnus
 - `/ba` — Breakthrough Advertising (Eugene Schwartz): diagnostica + escreve copy de qualquer formato (headline, VSL, página, email, ad) usando 3 perguntas: mass desire + awareness + sophistication
-- `/schwartz-headline` — atalho pra gerar variações de headline nos 5 níveis de awareness
+- `/schwartz-headline` — gera 20 headlines em grid 5×4 (5 awareness × 4 leads: Promise, Problem-Solution, Big-Secret, Story); calibrado por business-brain.md
 - `/briefing-avatar` — briefing de avatar pelo método Magnus
 - `/humanizer` — remove cara de IA de copy existente (editor médio); aprende com feedback e cresce sozinha
 
