@@ -41,6 +41,7 @@ Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 - `/ba` — Breakthrough Advertising (Eugene Schwartz): diagnostica + escreve copy de qualquer formato (headline, VSL, página, email, ad) usando 3 perguntas: mass desire + awareness + sophistication
 - `/schwartz-headline` — atalho pra gerar variações de headline nos 5 níveis de awareness
 - `/briefing-avatar` — briefing de avatar pelo método Magnus
+- `/humanizer` — remove cara de IA de copy existente (editor médio); aprende com feedback e cresce sozinha
 
 ## Workflow Pattern (pra qualquer pedido não-trivial)
 Research → Plan → Execute → Review → Ship
