@@ -47,7 +47,7 @@ Write file `.claude/skills/humanizer/SKILL.md` with this exact content:
 ---
 name: humanizer
 description: Use quando o usuário cola copy/texto e pede pra "tirar a cara de IA", "humanizar", "deixar mais cru", "remover clichês de IA", ou quando o usuário expressa frustração com texto soando robótico ("isso tá com cara de IA", "muito artificial"). Aceita texto colado direto OU caminho de arquivo. Editor médio: remove tells, reescreve frases enfraquecidas, ajusta ritmo — sem mudar argumento ou estrutura macro. Aprende com feedback do usuário e atualiza o próprio SKILL.md via protocolo de confirmação.
-allowed-tools: Read, Write, Edit
+allowed-tools: Read, Edit
 ---
 
 # /humanizer — versão crua, sem cara de IA

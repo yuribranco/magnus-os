@@ -15,6 +15,8 @@ Se existir um arquivo `business-brain.md` na raiz do projeto onde a skill foi in
 
 Se `business-brain.md` não existir, **skipa silenciosamente** e segue. Não é erro.
 
+**Detecção de template não preenchido**: se o arquivo existir mas a seção `Voice → Nunca` contiver placeholders no formato `[...]` (ex: `[Ex: "Headlines 'descubra como...'"]`), trate como não calibrado — **skipa silenciosamente** e não extrai esses placeholders como banidos.
+
 ## Passo 1 — Receber input
 
 Aceita duas formas:

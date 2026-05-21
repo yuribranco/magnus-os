@@ -48,7 +48,7 @@ Objetivo: skill dedicada que recebe copy de qualquer origem (rascunho de IA, tra
 ---
 name: humanizer
 description: <triggers naturais — quando invocar automaticamente>
-allowed-tools: Read, Write, Edit
+allowed-tools: Read, Edit
 ---
 
 # /humanizer — versão crua, sem cara de IA
