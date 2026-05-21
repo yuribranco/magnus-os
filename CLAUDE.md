@@ -42,6 +42,7 @@ Toda decisão complexa vira coordenador-magnus despachando pros specialists.
 - `/schwartz-headline` — gera 20 headlines em grid 5×4 (5 awareness × 4 leads: Promise, Problem-Solution, Big-Secret, Story); calibrado por business-brain.md
 - `/briefing-avatar` — briefing de avatar pelo método Magnus
 - `/humanizer` — remove cara de IA de copy existente (editor médio); aprende com feedback e cresce sozinha
+- `/inbox-test` — lista os 5 últimos emails de `in:inbox` da conta autenticada (via MCP gmail); smoke test do MCP Gmail
 
 ## Workflow Pattern (pra qualquer pedido não-trivial)
 Research → Plan → Execute → Review → Ship
