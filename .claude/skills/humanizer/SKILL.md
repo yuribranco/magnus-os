@@ -1,7 +1,7 @@
 ---
 name: humanizer
 description: Use quando o usuário cola copy/texto e pede pra "tirar a cara de IA", "humanizar", "deixar mais cru", "remover clichês de IA", ou quando o usuário expressa frustração com texto soando robótico ("isso tá com cara de IA", "muito artificial"). Aceita texto colado direto OU caminho de arquivo. Editor médio: remove tells, reescreve frases enfraquecidas, ajusta ritmo — sem mudar argumento ou estrutura macro. Aprende com feedback do usuário e atualiza o próprio SKILL.md via protocolo de confirmação.
-allowed-tools: Read, Write, Edit
+allowed-tools: Read, Edit
 ---
 
 # /humanizer — versão crua, sem cara de IA
@@ -127,9 +127,11 @@ Não caça feedback em mensagens aleatórias da sessão. Se o user mudou de assu
 | Reversão pontual | "essa frase você não devia ter mexido" | NÃO vira regra. Agradece e segue. |
 | Elogio | "ficou bom", "perfeito" | NÃO vira regra. Não escreve nada. |
 
-### Protocolo de atualização (3 passos — SEMPRE)
+**Nota de classificação:** "nunca usa X" / "sempre evita X" sobre uma **palavra ou frase concreta** → Banidos aprendidos. Sobre um **padrão estrutural** (em-dash, paralelismo, listas tríplices, etc) → primeiro checa se já é Regra fixa; se sim, ignora silenciosamente (já coberto). Se não, oferece como candidato a Regra fixa direto, sem passar por Banidos.
 
-**1. Propõe explicitamente:**
+### Protocolo de atualização (SEMPRE)
+
+**Etapa A — Propõe explicitamente:**
 
 ```
 Detectei feedback. Vou adicionar aos Banidos aprendidos:
@@ -138,21 +140,23 @@ Detectei feedback. Vou adicionar aos Banidos aprendidos:
 Confirma? (sim / não / ajusta)
 ```
 
-**2. Aguarda confirmação:**
-- `sim` → vai pro passo 3
+**Etapa B — Aguarda confirmação:**
+- `sim` → vai pra Etapa C
 - `não` → descarta, segue conversa
-- `ajusta <texto>` → aceita reformulação, volta ao passo 1 com nova proposta
+- `ajusta <texto>` → aceita reformulação, volta à Etapa A com nova proposta
 
-**3. Escreve no SKILL.md com `Edit`:**
+**Etapa C — Escreve no SKILL.md com `Edit`:**
 - Modifica APENAS `## Banidos aprendidos` OU `## Substituições preferidas`.
 - **Nunca** toca em `## Regras fixas` sem comando explícito de promoção (ver Manutenção).
 - Formato exato conforme exemplo das próprias seções.
+- **Ponto de inserção**: encontra o comentário HTML `<!-- ... -->` da seção alvo e insere o novo item **imediatamente acima** dele. Nunca insere dentro dos blocos de código de exemplo (entre as cercas ```).
+- **Idioma**: novos itens (texto do contexto, descrições de padrão) sempre em PT-BR, independente do idioma do input que originou o feedback. Mantém a lista interna consistente.
 
 ### Guardrails (anti-poluição)
 
 - **Sem duplicata**: antes de propor, lê a seção alvo. Se item já existe, mostra o existente e não propõe.
 - **Sem contradição**: se candidato a banido contradiz uma regra fixa, avisa: "isso vai contra a Regra fixa #N. Quer promover pra regra fixa em vez de adicionar como banido?" Aguarda decisão.
-- **1 update por confirmação**: se a mensagem de feedback tem 3 itens, propõe 3 updates mas confirma um por vez.
+- **1 update por confirmação**: se a mensagem de feedback tem N itens, propõe e confirma um por vez, na ordem em que apareceram. `não` em um item descarta só aquele e segue pro próximo. `não vou confirmar nada` (ou silêncio prolongado) → aborta os restantes sem perguntar de novo.
 - **Sem update sem confirmação**: elogio puro, feedback ambíguo, reversão pontual → não escreve nada.
 
 ## Manutenção
@@ -164,7 +168,7 @@ Durante feedback sessions, se um destes gatilhos disparar, a skill **sugere** (n
 | Gatilho | Sugestão |
 |---|---|
 | `## Banidos aprendidos` passa de **30 itens** | "Quer que eu agrupe banidos parecidos? Tenho N itens que são variações de '...'." |
-| Mesmo padrão aparece em **3+ banidos** | "Banidos #X, #Y, #Z são todos <padrão>. Quer promover pra Regra fixa?" |
+| Mesmo padrão aparece em **3+ banidos** | "Vejo 3 banidos que são variações de <padrão>: \"...\", \"...\", \"...\". Quer promover pra Regra fixa?" |
 | `SKILL.md` passa de **500 linhas** | "SKILL.md tá em N linhas. Quer revisar a lista de aprendidos comigo agora?" |
 
 Rastreamento de uso por banido (decay) está fora de escopo na v1.
