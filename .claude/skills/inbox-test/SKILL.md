@@ -1,7 +1,7 @@
 ---
 name: inbox-test
 description: Use quando o usuário pedir pra "ler a inbox", "ver últimos emails", "checar email", "testar gmail", "/inbox-test", ou quando quiser validar que o MCP Gmail está funcionando. Lista os 5 últimos emails de in:inbox da conta autenticada (via MCP gmail) no formato Magnus. Read-only. Sem parâmetros — conta é determinada pelo token OAuth em ~/.gmail-mcp/credentials.json.
-allowed-tools: mcp__gmail__search_emails, mcp__gmail__read_email, Bash
+allowed-tools: mcp__gmail__search_emails, mcp__gmail__read_email
 ---
 
 # /inbox-test — 5 últimos emails
@@ -73,7 +73,7 @@ Pra cada response, extraia:
 - **From**: header `From` (formato `"Nome Sobrenome" <email@dominio.com>` ou só `email@dominio.com`)
 - **Subject**: header `Subject`
 - **Date**: header `Date` (RFC 2822, ex: `Tue, 21 May 2026 14:32:08 -0300`)
-- **Snippet**: campo `snippet` (preview de até ~200 chars que o Gmail já fornece)
+- **Snippet**: campo `snippet` (preview bruto de até ~200 chars que o Gmail retorna — você vai truncar pra 120 no Passo 3)
 
 **Se algum header faltar** (raro mas possível em emails malformados): use `(sem assunto)` / `(remetente desconhecido)` / `(sem data)` como fallback.
 
