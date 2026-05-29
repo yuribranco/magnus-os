@@ -48,7 +48,7 @@ Citações verbatim do doc oficial do Agent SDK (`code.claude.com/docs/en/agent-
 - **Painel (GUI, v1):** Next.js + Agent SDK rodando em **BYO-API-key** do cliente. A GUI dispara as mesmas skills visualmente. Custo de API recai no cliente (leve). Aproveita 100% o hardening de 2026-05-28 (commit `dddbe32`: `settingSources:['project']`, `mcpServers` do `.mcp.json`, body injection, etc.) — só troca a auth de assinatura → `ANTHROPIC_API_KEY` do cliente.
 
 ### 3.2 Componentes
-1. **Plugin Magnus OS** (marca própria) — `plugin.json` + `.claude/skills/*` (incl. `copy-magnus`) + `.mcp.json` (Notion/Canva) + template `contexto/`+`operacao/` + hook de telemetria. Usado no Claude Code interativo.
+1. **Plugin Magnus OS** (marca própria) — `.claude-plugin/plugin.json` + `skills/*` (na raiz do plugin, namespaced `/magnus-os:*`, incl. `copy-magnus`) + `.mcp.json` (Notion/Canva) + `hooks/hooks.json` (telemetria SessionStart fail-open). Usado no Claude Code interativo. **CORREÇÃO (verificado nos docs oficiais 2026-05-29):** plugins NÃO materializam arquivos de projeto — o template `contexto/`+`operacao/`+`CLAUDE.md` é responsabilidade do **instalador** (Fase 4), não do plugin. O plugin só contribui capacidades globais (skills/hooks/MCP).
 2. **Painel Magnus OS** (`magnus-painel` evoluído) — GUI local, BYO-API-key, em v1.
 3. **Instalador** (`npx magnus-os` / `curl … | bash`) — pede license-key → valida no Supabase → instala o plugin em `~/.claude/plugins/magnus-os/` → configura o painel (pede a `ANTHROPIC_API_KEY` do cliente, guarda local) → grava `~/.claude/magnus-os/license.json`. Subcomando `update` re-valida + re-baixa.
 4. **Emissor de licença (Supabase)** — Edge Functions:
@@ -78,7 +78,8 @@ A telemetria de ativação é o ativo estratégico (não a anti-pirataria). Mesm
 Fricção, não muralha (pesquisa: Denuvo cai no day-one; arquivo assinado offline não é à prova de adulteração; device-binding não impede transferência). Skills são markdown — sem runtime a proteger. **Aceitar vazamento; o moat é o upsell + os updates contínuos gateados** (quem não tem key válida não recebe updates nem entra no funil).
 
 ## 6. Mudanças no que já existe
-- `teste-zerado` (template + skills) → vira o **plugin Magnus OS** com marca própria + `plugin.json`.
+- `teste-zerado` (template + skills) → **separado em dois**: as `skills/` viram o **plugin Magnus OS** (namespaced `/magnus-os:*`); o scaffold `contexto/`+`operacao/`+`CLAUDE.md` vira a fonte `template/` que o **instalador** materializa no cwd do cliente (plugins não criam arquivos de projeto).
+- **`/cc` → `copy-magnus`:** stub leve no plugin (Schwartz inline + install on-demand) + **repo GitHub privado `copy-magnus`** (rebrand completo do copy-chief-black, MIT do Luca preservado) clonado por token. (Decisão Yuri 2026-05-29: bundle completo, no GitHub privado, on-demand.)
 - `magnus-painel` (Agent SDK) → **evolui pra painel do v1**, auth trocada pra **BYO-API-key** (`ANTHROPIC_API_KEY` do cliente em vez de assinatura).
 - **`/cc` → `/cm` (copy-magnus):** renomear skill, atualizar `criar-landing` + refs; bundlar com LICENSE/atribuição do Luca.
 - **Propagar os 6 fixes de hardening de 2026-05-28** (commit `dddbe32`) pro template canônico antes de empacotar.
