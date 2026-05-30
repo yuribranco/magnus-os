@@ -103,10 +103,10 @@ Tasks 5-8 do plano `plans/2026-05-29-os-update-mechanism.md`, com o refinamento 
 
 ## Fora de escopo deste v1 (registrado pra não perder)
 
-- 🔒 **Segurança — travar o agente ao workspace.** `runs-runtime.ts:151` seta
-  `additionalDirectories = $HOME` por padrão + `bypassPermissions` → o agente enxerga a HOME inteira.
-  **Recomendado fortemente pro próximo v1** (baixo esforço, furo real). Escopar a `[workspace,
-  dir do plugin]`.
+- 🔓 **Acesso à HOME = decisão deliberada (NÃO travar).** `runs-runtime.ts:151` deixa o agente
+  enxergar a HOME (`additionalDirectories = $HOME` + `bypassPermissions`). Decisão do Yuri
+  (2026-05-29): **manter** — o agente às vezes precisa de arquivos de outras pastas do usuário.
+  Não é furo a corrigir; é escopo de produto intencional.
 - ✂️ Cortes: deferir Gemini até o 1º criativo · cortar/deferir Notion/Canva · remover modos de
   permissão · `copy-magnus` via download gated (não `git clone`) · porta 3737/3940.
 - 🌐 Pré-preenchimento do onboarding por extração de URL (Jasper-style) — evolução futura.
