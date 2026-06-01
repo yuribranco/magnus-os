@@ -22,7 +22,8 @@ This plan produces **working, testable software on its own**: with a hand-author
 │    link.json       ← BM↔campanha binding (schema §5)                               │
 │    insights.json   ← performance snapshot (schema §5)                              │
 │    synced_at       ← ISO timestamp of last pull (also mirrored in insights.json)   │
-│    bm-campaigns.json (transient) ← BM campaign list the agent dumps for matching   │
+│    bm-campaigns.json (transient, skill-internal) ← BM list the agent dumps while   │
+│       matching in chat; the painel does NOT read it (see M5 deviation note)        │
 └────────────────────────────────────────────────────────────────────────────────┘
         ▲ writes (agent only)                          │ reads (painel only)
         │                                              ▼
@@ -39,6 +40,8 @@ This plan produces **working, testable software on its own**: with a hand-author
 **Connection model** mirrors the existing MCP onboarding: the Meta server is listed in the workspace `.mcp.json` (so `readMcpStatus()` reports it configured + `loadTemplateMcpServers()` hands it to the SDK), and a "Conecte a Meta" banner reuses the `MCPConnectBanner` Terminal+`/mcp` OAuth flow. No token ever touches the painel.
 
 **Module gate:** Inc 1 adds a `meta` module flag (default **on** — it's the headline feature of the redesign), so the Resultados tab + Meta banner can be hidden via env if needed, consistent with the Inc 0 flag mechanism.
+
+> **M5 — intentional deviation from spec §Inc 1 (BM↔campaign association UX):** the spec implies an association affordance in the painel. In the **MVP this is chat-driven, not a painel picker**: the `sincronizar-meta` skill lists the Business Manager campaigns, name-matches, confirms the binding **in chat**, and writes `link.json`. The painel renders **no** BM-campaign picker in Inc 1 — it only *reads* `link.json` (to drive `metaConnected`, see I1) and `insights.json`. Therefore the plan ships **no** `readBmCampaigns()` reader, **no** `BmCampaign` type, and **no** test for them (YAGNI — nothing in the painel consumes the BM list). The transient `bm-campaigns.json` the skill may dump is skill-internal/debug only. A painel-side association picker is **deferred to a later increment**.
 
 ## Tech Stack
 
@@ -62,10 +65,10 @@ This plan produces **working, testable software on its own**: with a hand-author
 ### Painel repo `~/Documents/Magnus/magnus-imersao/painel-aula-4/magnus-painel`
 | File | Status | Responsibility |
 |---|---|---|
-| `lib/meta-types.ts` | **created** | TypeScript types matching schema §5 byte-for-byte (`MetaInsights`, `MetaLink`, `MetaAdRow`, `BmCampaign`). |
+| `lib/meta-types.ts` | **created** | TypeScript types matching schema §5 byte-for-byte (`MetaInsights`, `MetaLink`, `MetaAdRow`). (No `BmCampaign` — see M5 note.) |
 | `lib/meta-format.ts` | **created** | Pure formatters: BRL currency, percent, ROAS `×`, relative "há N min", winner pick, ROAS sort, break-even color. **TDD.** |
 | `lib/meta-format.test.ts` | **created** | Failing-first vitest specs for every formatter. **TDD.** |
-| `lib/meta.ts` | **created** | Server-side readers: `readInsights(slug)`, `readMetaLink(slug)`, `readSyncedAt(slug)`, `isStale(syncedAt, min)`, `readBmCampaigns(slug)`. Parses + validates the JSON; returns `null` on missing/bad. |
+| `lib/meta.ts` | **created** | Server-side readers: `readInsights(slug)`, `readMetaLink(slug)`, `readSyncedAt(slug)`, `isStale(syncedAt, min)`. Parses + validates the JSON; returns `null` on missing/bad. (No `readBmCampaigns` — see M5 note: BM↔campaign association is chat-driven in Inc 1; the painel does not consume the BM list.) |
 | `lib/meta.test.ts` | **created** | vitest for `readInsights`/`isStale` using a temp workspace (mirror `paths.test.ts` style). **TDD.** |
 | `lib/meta-stale.ts` | **created** | `getMetaStaleMinutes()` — reads `MAGNUS_META_STALE_MIN` env, default 30. **TDD-covered in `meta.test.ts`.** |
 | `lib/modules.ts` | **modified** | Add `meta: boolean` flag (default **true**), env `MAGNUS_MODULE_META`. |
@@ -75,7 +78,7 @@ This plan produces **working, testable software on its own**: with a hand-author
 | `lib/store.ts` | **modified** | `activeTab` value type `"overview" \| "tasks"` → add `"results"`; `setActiveTab` signature widened. |
 | `components/icons.tsx` | **modified** | Add `barChart` icon (lucide `BarChart3`) for the Resultados tab + Meta banner. |
 | `components/MetaConnectBanner.tsx` | **created** | "Conecte a Meta" banner — thin wrapper over the existing `MCPConnectBanner` flow extended to `server: "meta"`. |
-| `components/NotionConnectBanner.tsx` | **modified** | Extend `ServerKey` + `SERVER_LABELS` to include `meta`; `_status` already returns all servers. |
+| `components/NotionConnectBanner.tsx` | **modified** | This file defines its OWN local `interface McpStatus` (~L6-9) + `type ServerKey` (~L11) + `SERVER_LABELS` (~L13), **not** imported from `lib/types`. Add `meta` to ALL THREE: the local `McpStatus` interface, `ServerKey`, and `SERVER_LABELS`. `fetchStatus()` (`/api/notion/_status`) already returns all servers — no change there. |
 | `components/ResultadosTab.tsx` | **created** | The variant-B dashboard: KPI band, funnel strip, ad table, period control, connect/empty/loading/error states, "Atualizar" + "gerar variação do vencedor" stub. |
 | `app/c/[slug]/CampaignWorkspace.tsx` | **modified** | Add "Resultados" tab to `TabBar`, render `ResultadosTab` when active + `modules.meta`. |
 | `app/c/[slug]/page.tsx` | **modified** | Pass `insights`/`link`/`syncedAt`/`staleMinutes` (read server-side) into `CampaignWorkspace`; render `MetaConnectBanner` when `modules.meta`. |
@@ -104,7 +107,14 @@ This plan produces **working, testable software on its own**: with a hand-author
 
 > **Validate at connect time:** the server name key (`meta`) becomes the tool prefix (`mcp__meta__*`). The URL `https://mcp.facebook.com/ads` and HTTP transport are confirmed (official Meta Ads AI Connector, OAuth via Business Manager, no Developer App). If Claude Code's MCP schema for this server requires `"transport": "http"` instead of `"type": "http"`, adjust to match `claude mcp list` output the first time you connect — both spellings appear in the wild; the painel's `readMcpStatus` only checks for the `meta` **key**, so it's robust either way.
 
-**Verify:** `python3 -m json.tool plugins/magnus-os/.mcp.json` → pretty-prints with no error.
+**Verify — 🔴 HARD GATE (the dashboard never gets data if the shape is wrong):**
+1. JSON is well-formed: `python3 -m json.tool plugins/magnus-os/.mcp.json` → pretty-prints with no error.
+2. The shape actually LOADS in Claude Code / the Agent SDK and exposes Meta tools. From a workspace whose `.mcp.json` contains this server (e.g. `cd` into the seeded template workspace from Task A2, or copy this file in), run **one** of:
+   - `claude mcp list` → the `meta` server appears as **connected** (after OAuth) and lists `mcp__meta__*` tools; OR
+   - an Agent SDK smoke that starts a run and prints available tool names → confirm at least one `mcp__meta__*` tool is present.
+3. **Fallback if it does NOT load:** swap the key `"type"` → `"transport"` (i.e. `{ "transport": "http", "url": "https://mcp.facebook.com/ads" }`) and re-run step 2. Try `type` first, then `transport`. Apply whichever shape loads tools to BOTH `.mcp.json` files (this task + Task A2). Do NOT proceed past Phase A until `mcp__meta__*` tools load — every downstream task assumes they exist.
+
+> Why a hard gate (not graceful): unlike Notion/Canva (whose absence just degrades a skill to text), if the Meta server entry is malformed the agent gets zero `mcp__meta__*` tools, `sincronizar-meta` can never write `insights.json`, and the entire Resultados dashboard is permanently empty. A `readMcpStatus` key-check passing does NOT prove the tools loaded — this step does.
 
 **Commit (plugin repo):** `feat(mcp): add official Meta Ads MCP server (read-only OAuth)`
 
@@ -168,9 +178,22 @@ setActiveTab: (slug: string, tab: "overview" | "tasks" | "results") => void;
 
 ### Task A5 — Extend the connect banner to `meta`
 **File:** `components/NotionConnectBanner.tsx`
-- `type ServerKey = "notion" | "canva" | "meta";`
-- Add to `SERVER_LABELS`:
 
+> ⚠️ This component declares its OWN local types — it does NOT import `McpStatus`/`ServerKey` from `lib/types`. You must edit THREE things in this file (the `lib/types.ts` change from A3 does NOT propagate here):
+
+1. **Local `McpStatus` interface** (~L6-9) — add the `meta` line:
+```ts
+interface McpStatus {
+  notion: "disconnected" | "authenticating" | "authenticated";
+  canva: "disconnected" | "authenticating" | "authenticated";
+  meta: "disconnected" | "authenticating" | "authenticated";
+}
+```
+2. **`ServerKey`** (~L11):
+```ts
+type ServerKey = "notion" | "canva" | "meta";
+```
+3. **`SERVER_LABELS`** (~L13) — add a `meta` entry:
 ```ts
 meta: {
   name: "Meta",
@@ -179,7 +202,7 @@ meta: {
     "A skill `sincronizar-meta` lê os resultados dos seus anúncios via MCP oficial da Meta (somente leitura, OAuth pelo Business Manager — sem app de desenvolvedor, sem colar token). Conecte uma vez pra ver os números na aba Resultados.",
 },
 ```
-- The `fetchStatus()` reads `/api/notion/_status` which returns the full `McpStatus` (now incl. `meta`) — no change needed there. The `handleConnect()` POSTs `{ server }` to `/api/mcp/connect`, which already opens Terminal with the server name interpolated — works for `"meta"` unchanged.
+- The `fetchStatus()` reads `/api/notion/_status` which returns the full status object (now incl. `meta`) — no change needed there. The `handleConnect()` POSTs `{ server }` to `/api/mcp/connect`, which already opens Terminal with the server name interpolated — works for `"meta"` unchanged.
 
 **File:** `components/MetaConnectBanner.tsx` (**new**) — thin, page-level wrapper so the page reads cleanly:
 
@@ -258,14 +281,9 @@ export interface MetaLink {
   linked_at: string;
   match_confidence: "auto" | "manual";
 }
-
-/** operacao/<slug>/meta/bm-campaigns.json (transiente, escrito pela skill p/ matching) */
-export interface BmCampaign {
-  id: string;
-  name: string;
-  account_id: string;
-}
 ```
+
+> **M5:** there is intentionally **no** `BmCampaign` type. The BM↔campaign association is chat-driven (the skill writes `link.json`); the painel never reads the BM list, so a type for it would be dead code (YAGNI). See the M5 deviation note in Architecture.
 
 **Verify:** `npx tsc --noEmit` → OK (types-only, no runtime).
 
@@ -417,7 +435,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readInsights, readMetaLink, readSyncedAt, isStale, readBmCampaigns } from "./meta";
+import { readInsights, readMetaLink, readSyncedAt, isStale } from "./meta";
 import { getMetaStaleMinutes } from "./meta-stale";
 
 const SAVED = { cwd: process.env.MAGNUS_PAINEL_CWD, stale: process.env.MAGNUS_META_STALE_MIN };
@@ -429,12 +447,14 @@ function writeMeta(slug: string, file: string, body: string) {
   fs.writeFileSync(path.join(dir, file), body);
 }
 
+// I3 — fixture self-consistente: breakeven_roas = round(1/margin, 2).
+// margin 0.77 → 1/0.77 = 1.2987 → 1.30 (bate com o mockup locked dash-b.png).
 const VALID_INSIGHTS = JSON.stringify({
   synced_at: "2026-06-01T12:00:00Z",
   account_id: "act_1182",
   campaign: { name: "VC | Diagnóstico", spend: 4820, results: 214, cpa: 22.52, roas: 3.8, revenue: 18316 },
   funnel: { hook_rate: 0.34, hold_rate: 0.52, ctr_outbound: 0.021 },
-  margin: 0.9,
+  margin: 0.77,
   breakeven_roas: 1.3,
   ads: [{ ad_id: "b", name: "Reels-depoimento-01", thumb: "", spend: 1940, hook_rate: 0.41, ctr: 0.028, cpa: 18, roas: 5.1 }],
   period: { since: "2026-05-25", until: "2026-06-01" },
@@ -486,14 +506,45 @@ describe("getMetaStaleMinutes", () => {
   it("valor inválido → 30", () => { process.env.MAGNUS_META_STALE_MIN = "abc"; expect(getMetaStaleMinutes()).toBe(30); });
 });
 
-describe("readBmCampaigns", () => {
-  it("lê lista transiente", () => {
-    writeMeta("cap", "bm-campaigns.json", JSON.stringify([{ id: "1", name: "X", account_id: "act_1" }]));
-    expect(readBmCampaigns("cap")).toHaveLength(1);
+// I4 — números codificados como string (bug recorrente: "Tiny API lies about types").
+// Uma MCP/skill pode gravar "4820" em vez de 4820. O reader deve coagir números na leitura
+// (Number(...)) OU rejeitar o arquivo — nunca deixar string vazar pros formatters/sort.
+describe("readInsights — numéricos string-encoded (I4)", () => {
+  it("coage spend/cpa/roas/results + ads numéricos de string p/ number", () => {
+    writeMeta("cap", "insights.json", JSON.stringify({
+      synced_at: "2026-06-01T12:00:00Z",
+      account_id: "act_1182",
+      campaign: { name: "VC", spend: "4820", results: "214", cpa: "22.52", roas: "3.8", revenue: "18316" },
+      funnel: { hook_rate: "0.34", hold_rate: "0.52", ctr_outbound: "0.021" },
+      margin: "0.77",
+      breakeven_roas: "1.30",
+      ads: [{ ad_id: "b", name: "Reels", thumb: "", spend: "1940", hook_rate: "0.41", ctr: "0.028", cpa: "18", roas: "5.1" }],
+      period: { since: "2026-05-25", until: "2026-06-01" },
+    }));
+    const got = readInsights("cap");
+    expect(got).not.toBeNull();
+    // tipos coagidos
+    expect(typeof got!.campaign.spend).toBe("number");
+    expect(got!.campaign.spend).toBe(4820);
+    expect(typeof got!.campaign.roas).toBe("number");
+    expect(got!.breakeven_roas).toBe(1.3);
+    expect(typeof got!.ads[0].roas).toBe("number");
+    expect(got!.ads[0].roas).toBe(5.1);
+    expect(typeof got!.funnel.hook_rate).toBe("number");
   });
-  it("ausente → []", () => { expect(readBmCampaigns("cap")).toEqual([]); });
+  it("string não-numérica num campo obrigatório → null", () => {
+    writeMeta("cap", "insights.json", JSON.stringify({
+      synced_at: "2026-06-01T12:00:00Z", account_id: "act_1",
+      campaign: { name: "X", spend: "abc", results: 1, cpa: 1, roas: 1, revenue: 1 },
+      funnel: { hook_rate: 0, hold_rate: 0, ctr_outbound: 0 },
+      margin: 0.9, breakeven_roas: 1.11, ads: [], period: { since: "a", until: "b" },
+    }));
+    expect(readInsights("cap")).toBeNull();
+  });
 });
 ```
+
+> **I4:** the `VALID_INSIGHTS` fixture above already obeys `breakeven_roas = round(1/margin, 2)` — bump it to `margin: 0.77` / `breakeven_roas: 1.3` so it matches the locked mockup and the assertions in the existing `readInsights` specs stay consistent (update `VALID_INSIGHTS` accordingly when you write the file).
 
 **Run (expect FAIL):** `npm test -- meta.test meta-stale` → fails (modules missing).
 
@@ -511,13 +562,13 @@ export function getMetaStaleMinutes(): number {
 ```
 
 ### Task B6 — Implement `lib/meta.ts` to green
-**File:** `lib/meta.ts` (**new**). Server-side; guards path traversal like `run-outputs.ts`.
+**File:** `lib/meta.ts` (**new**). Server-side; guards path traversal like `run-outputs.ts`. Per **I4**, the reader is the single trust boundary: it coerces every numeric field via `Number(...)` on read (accepting `number` OR numeric string) and rejects the file (→ `null`) if any required numeric is non-coercible. Because the reader always returns `number`s, the downstream `meta-format.ts` formatters and `sortAdsByRoas` are guaranteed to operate on numbers, never strings — no string can reach `b.roas - a.roas`.
 
 ```ts
 import fs from "node:fs";
 import path from "node:path";
 import { operacaoDir } from "./paths";
-import type { MetaInsights, MetaLink, BmCampaign } from "./meta-types";
+import type { MetaInsights, MetaLink, MetaCampaignSummary, MetaFunnel, MetaAdRow } from "./meta-types";
 
 /** Resolve operacao/<slug>/meta/<file> bloqueando traversal. null se sair de operacao/. */
 function metaFilePath(slug: string, file: string): string | null {
@@ -532,36 +583,81 @@ function readJson<T>(fp: string | null): T | null {
   try { return JSON.parse(fs.readFileSync(fp, "utf8")) as T; } catch { return null; }
 }
 
-/** Valida os campos obrigatórios do schema §5. */
-function isValidInsights(x: unknown): x is MetaInsights {
-  if (!x || typeof x !== "object") return false;
+/**
+ * I4 — coerção numérica defensiva (bug recorrente "Tiny API lies about types": uma fonte
+ * pode gravar "4820" em vez de 4820). Aceita number OU string numérica; qualquer outra coisa
+ * (string não-numérica, null, undefined) → NaN, que reprova a validação e zera o arquivo.
+ */
+function num(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+function coerceCampaign(o: Record<string, unknown>): MetaCampaignSummary {
+  return {
+    name: String(o.name ?? ""),
+    spend: num(o.spend), results: num(o.results), cpa: num(o.cpa),
+    roas: num(o.roas), revenue: num(o.revenue),
+  };
+}
+function coerceFunnel(o: Record<string, unknown>): MetaFunnel {
+  return { hook_rate: num(o.hook_rate), hold_rate: num(o.hold_rate), ctr_outbound: num(o.ctr_outbound) };
+}
+function coerceAd(o: Record<string, unknown>): MetaAdRow {
+  return {
+    ad_id: String(o.ad_id ?? ""), name: String(o.name ?? ""), thumb: String(o.thumb ?? ""),
+    spend: num(o.spend), hook_rate: num(o.hook_rate), ctr: num(o.ctr), cpa: num(o.cpa), roas: num(o.roas),
+  };
+}
+
+const numbersOk = (...xs: number[]) => xs.every((n) => Number.isFinite(n));
+
+/**
+ * Parseia + valida + coage o insights.json p/ MetaInsights tipado. Numéricos vêm sempre como
+ * `number` no retorno (I4). Qualquer campo obrigatório ausente ou não-coercível → null.
+ * O painel CONFIA em `breakeven_roas` como escrito (a skill é a fonte única; o painel não recalcula).
+ */
+function parseInsights(x: unknown): MetaInsights | null {
+  if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
-  return (
-    typeof o.synced_at === "string" &&
-    typeof o.account_id === "string" &&
-    typeof o.campaign === "object" && o.campaign !== null &&
-    typeof o.funnel === "object" && o.funnel !== null &&
-    typeof o.margin === "number" &&
-    typeof o.breakeven_roas === "number" &&
-    Array.isArray(o.ads) &&
-    typeof o.period === "object" && o.period !== null
-  );
+  if (typeof o.synced_at !== "string" || typeof o.account_id !== "string") return null;
+  if (typeof o.campaign !== "object" || o.campaign === null) return null;
+  if (typeof o.funnel !== "object" || o.funnel === null) return null;
+  if (!Array.isArray(o.ads)) return null;
+  if (typeof o.period !== "object" || o.period === null) return null;
+
+  const campaign = coerceCampaign(o.campaign as Record<string, unknown>);
+  const funnel = coerceFunnel(o.funnel as Record<string, unknown>);
+  const margin = num(o.margin);
+  const breakeven_roas = num(o.breakeven_roas);
+  const ads = (o.ads as unknown[]).map((a) => coerceAd((a ?? {}) as Record<string, unknown>));
+  const period = o.period as { since?: unknown; until?: unknown };
+
+  // reprova se qualquer numérico obrigatório virou NaN (ex.: spend: "abc")
+  if (!numbersOk(campaign.spend, campaign.results, campaign.cpa, campaign.roas, campaign.revenue)) return null;
+  if (!numbersOk(funnel.hook_rate, funnel.hold_rate, funnel.ctr_outbound)) return null;
+  if (!numbersOk(margin, breakeven_roas)) return null;
+  if (ads.some((a) => !numbersOk(a.spend, a.hook_rate, a.ctr, a.cpa, a.roas))) return null;
+
+  return {
+    synced_at: o.synced_at, account_id: o.account_id, campaign, funnel,
+    margin, breakeven_roas, ads,
+    period: { since: String(period.since ?? ""), until: String(period.until ?? "") },
+  };
 }
 
 export function readInsights(slug: string): MetaInsights | null {
-  const parsed = readJson<MetaInsights>(metaFilePath(slug, "insights.json"));
-  return isValidInsights(parsed) ? parsed : null;
+  return parseInsights(readJson<unknown>(metaFilePath(slug, "insights.json")));
 }
 
 export function readMetaLink(slug: string): MetaLink | null {
   const parsed = readJson<MetaLink>(metaFilePath(slug, "link.json"));
   if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as MetaLink).meta_campaign_ids)) return null;
   return parsed;
-}
-
-export function readBmCampaigns(slug: string): BmCampaign[] {
-  const parsed = readJson<BmCampaign[]>(metaFilePath(slug, "bm-campaigns.json"));
-  return Array.isArray(parsed) ? parsed : [];
 }
 
 /** synced_at do insights.json; fallback pro arquivo `synced_at`. null se nenhum. */
@@ -628,7 +724,6 @@ const DEFAULTS: ModuleFlags = { tarefas: false, criarPost: false, notion: false,
 
 ```ts
 import { NextResponse } from "next/server";
-import { readMcpStatus } from "@/lib/notion";
 import { readInsights, readMetaLink, readSyncedAt, isStale } from "@/lib/meta";
 import { getMetaStaleMinutes } from "@/lib/meta-stale";
 
@@ -639,11 +734,15 @@ export async function GET(req: Request) {
   const slug = new URL(req.url).searchParams.get("slug");
   if (!slug) return NextResponse.json({ error: "slug obrigatório" }, { status: 400 });
 
-  const connected = readMcpStatus().meta === "authenticated";
   const insights = readInsights(slug);
   const link = readMetaLink(slug);
   const syncedAt = readSyncedAt(slug);
   const staleMinutes = getMetaStaleMinutes();
+
+  // I1 — "conectado" = vínculo/sync REAL (link.json ou insights.json), NÃO a chave .mcp.json.
+  // `readMcpStatus().meta` reportaria "authenticated" assim que a chave existe (semeada no
+  // install), o que tornaria o estado "disconnected" inalcançável. Mesma regra do client (D3).
+  const connected = link != null || insights != null;
 
   return NextResponse.json({
     connected,
@@ -655,6 +754,8 @@ export async function GET(req: Request) {
   });
 }
 ```
+
+> **I1 note:** the `.mcp.json` `meta` key still drives the **`MetaConnectBanner`** onboarding (via `readMcpStatus`, Task A3/A5) — that's correct: the banner is about "is the MCP server configured/authorized so a sync CAN run". But the **Resultados connection state** (`metaConnected`/`connected`) is a different question — "has a real sync/link happened yet" — and must be driven by `link.json`/`insights.json`, not the seeded key. Keep the two concerns separate.
 
 **Verify:** `npx tsc --noEmit` → OK.
 
@@ -995,15 +1096,31 @@ interface Props {
   const openSettings = useStore((s) => s.openSettings);
 
   // Resultados state machine (file-first; client computa a partir das props do server).
-  const mcps = useStore((s) => s.mcps);
-  const metaConnected = mcps.meta === "authenticated" || meta.insights != null || meta.link != null;
-  const syncingMeta = activeRun?.skillSlug === "sincronizar-meta" && activeRun.status !== "done" && activeRun.status !== "error";
+  //
+  // I1 — `metaConnected` é REAL: dirigido pela presença de link.json/insights.json (escritos
+  // por um sync de verdade), NÃO pela chave `meta` do .mcp.json. `readMcpStatus` reporta
+  // "authenticated" no instante em que a chave existe (semeada no install) → usar mcps.meta
+  // deixaria o estado "disconnected" + o MetaConnectBanner como UI morta. Só consideramos
+  // conectado quando houve um vínculo/sync real.
+  const metaConnected = meta.link != null || meta.insights != null;
+  //
+  // C3 — ORDENAÇÃO CRÍTICA (evita travar a aba em "Sincronizando…"):
+  // Um turn concluído do SkillRunner seta status `awaiting-input` (NÃO `done`; `done` só no
+  // fecho do SSE). Portanto `syncingMeta` só pode ser true em `starting`/`running` — incluir
+  // `awaiting-input` faria a aba ficar presa no spinner pra sempre. E mais: assim que insights
+  // FRESCOS existem (`meta.insights` && !meta.stale), `ready` VENCE qualquer estado de run.
+  const syncingMeta =
+    activeRun?.skillSlug === "sincronizar-meta" &&
+    (activeRun.status === "starting" || activeRun.status === "running");
   const metaError = activeRun?.skillSlug === "sincronizar-meta" && activeRun.status === "error";
+  const hasFreshInsights = meta.insights != null && !meta.stale;
   const resultsState: ResultsTabState =
-    syncingMeta ? { kind: "syncing", slug: campaign.slug }
+    // insights frescos ganham de tudo (run pode estar tecnicamente "awaiting-input"/vivo)
+    hasFreshInsights ? { kind: "ready", slug: campaign.slug }
+    : syncingMeta ? { kind: "syncing", slug: campaign.slug }
     : metaError ? { kind: "error", slug: campaign.slug, reason: "A puxada falhou. Veja o chat da skill pra detalhes." }
     : !metaConnected ? { kind: "disconnected" }
-    : meta.insights ? { kind: "ready", slug: campaign.slug }
+    : meta.insights ? { kind: "ready", slug: campaign.slug }   // insights existem mas stale → ainda renderiza (auto-sync dispara em paralelo)
     : meta.link ? { kind: "no-data", slug: campaign.slug }
     : { kind: "no-link", slug: campaign.slug };
 
@@ -1045,17 +1162,30 @@ interface Props {
             <TasksTab /* ...unchanged... */ />
           )}
 ```
-- **Auto-refresh on open (stale):** add an effect that fires the sync once when Resultados opens stale and not already syncing. Add `import { useEffect, useRef } from "react";` and:
+- **Auto-refresh on open (stale) — com backoff (I2):** dispara o sync UMA vez quando a aba Resultados abre com dados velhos. Guardas pra não re-disparar em loop:
+  - **I2 guard 1:** só auto-sincroniza se `metaConnected` (agora REAL, dirigido por link/insights — I1). Sem vínculo nenhum, nada de auto-sync às cegas.
+  - **I2 guard 2:** se a última tentativa de sync FALHOU (`metaError`), NÃO re-dispara automaticamente — o usuário clica "Tentar de novo" (senão alternar a aba re-dispararia um sync que falha de novo, em loop).
+  - **C3 ref reset:** zera o `autoSyncedRef` quando insights FRESCOS chegam (sync terminou com sucesso) — assim, da próxima vez que ficarem velhos, o auto-sync pode disparar de novo. Também zera ao sair da aba.
+
+  Add `import { useEffect, useRef } from "react";` and:
 ```tsx
   const autoSyncedRef = useRef(false);
   useEffect(() => {
-    if (effectiveTab === "results" && meta.stale && metaConnected && !syncingMeta && !autoSyncedRef.current) {
+    // C3: sync bem-sucedido (insights frescos) libera o próximo auto-sync futuro.
+    if (hasFreshInsights) autoSyncedRef.current = false;
+    if (effectiveTab !== "results") { autoSyncedRef.current = false; return; }
+    if (
+      meta.stale &&
+      metaConnected &&        // I1: vínculo/sync real, não a chave .mcp.json
+      !syncingMeta &&
+      !metaError &&           // I2: não re-disparar sobre uma falha — espera ação do usuário
+      !autoSyncedRef.current
+    ) {
       autoSyncedRef.current = true;
       syncMeta();
     }
-    if (effectiveTab !== "results") autoSyncedRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveTab, meta.stale, metaConnected, syncingMeta]);
+  }, [effectiveTab, meta.stale, metaConnected, syncingMeta, metaError, hasFreshInsights]);
 ```
 
 > The `openSettings()` for "Conectar" reuses the existing settings entry; the dedicated `MetaConnectBanner` (rendered by the page above the workspace) is the primary connect affordance. Both are fine — the banner is the prominent one.
@@ -1111,7 +1241,7 @@ Puxa o resultado real dos anúncios da Meta e grava no workspace pro painel rend
 
 ### Passo 2 — Garantir o vínculo (link.json)
 1. Se `operacao/{campanha}/meta/link.json` já existe e tem `meta_campaign_ids` não-vazio, **reaproveite** (pule pro Passo 3) — a menos que o usuário peça pra reassociar.
-2. Senão: liste as contas e campanhas do Business Manager via as tools de listagem do MCP. Grave a lista (transiente, pro painel/depuração) em `operacao/{campanha}/meta/bm-campaigns.json` no formato:
+2. Senão: liste as contas e campanhas do Business Manager via as tools de listagem do MCP. A associação BM↔campanha acontece **no chat** (você lista, sugere o match e confirma com o usuário — M5). Opcionalmente grave a lista em `operacao/{campanha}/meta/bm-campaigns.json` apenas como rascunho/depuração da própria skill (o painel NÃO lê esse arquivo — não há picker no painel no Inc 1). Formato:
    ```json
    [ { "id": "...", "name": "...", "account_id": "act_..." } ]
    ```
@@ -1134,7 +1264,7 @@ Puxa o resultado real dos anúncios da Meta e grava no workspace pro painel rend
    - **Nível campanha:** gasto (`spend`), resultados/leads (`results`), CPA/custo por resultado (`cpa`), ROAS (`roas`), faturamento (`revenue`).
    - **Funil:** `hook_rate` (3s views ÷ impressões), `hold_rate` (15s ÷ 3s views), `ctr_outbound` (CTR de saída). Todos como **fração 0..1** (ex.: 34% → `0.34`).
    - **Por anúncio (ads ativos):** `ad_id`, `name`, `thumb` (URL do thumbnail OU deixe `""` se não disponível), `spend`, `hook_rate`, `ctr`, `cpa`, `roas`.
-3. **Margem e break-even:** se o BRIEFING informar margem, use-a; senão use `margin: 0.9` (90%) como padrão e calcule `breakeven_roas = +(1 / margin).toFixed(2)` (ex.: margem 0.9 → 1.11). Se a margem não fizer sentido, peça ao usuário UMA vez.
+3. **Margem e break-even (I3 — invariante):** se o BRIEFING informar margem, use-a; senão use `margin: 0.9` (90%) como padrão. SEMPRE calcule `breakeven_roas = +(1 / margin).toFixed(2)` — os dois campos têm que obedecer essa relação (ex.: margem 0.9 → 1.11; margem 0.77 → 1.30). O **painel CONFIA no `breakeven_roas` como você escreveu** (a skill é a fonte única; o painel NÃO recalcula a partir de `margin`). Logo, nunca grave um par inconsistente. Se a margem não fizer sentido, peça ao usuário UMA vez.
 4. Grave `operacao/{campanha}/meta/insights.json` **exatamente** com este schema (chaves idênticas; números, não strings):
    ```json
    {
@@ -1173,10 +1303,22 @@ Run from the painel repo:
 1. **Types:** `npx tsc --noEmit` → exit 0, no output.
 2. **Tests:** `npm test` → all suites pass (existing + `meta-format`, `meta`, `meta-stale`, `modules`).
 3. **Build:** `npm run -s build` → completes; no type/lint errors.
-4. **QA-visual (`/browse`):** prepare a fixture `operacao/<slug>/meta/insights.json` with the mockup numbers (Gasto R$ 4.820 / Leads 214 / Custo/lead R$ 22,52 / ROAS 3,8× / break-even 1,3× / hook 34% / hold 52% · CTR 2,1% / 3 ads: Reels-depoimento-01 5,1× vencedor, Estatico-grafico-02 3,6×, Carrossel-prova-03 2,4×). Start the painel (`npm run dev`, port 3737, with `MAGNUS_PAINEL_CWD` = the fixture workspace), open `/c/<slug>`, click **Resultados**, and visually diff against `docs/mockups/dash-b.png`:
+4. **QA-visual (`/browse`):** prepare a fixture `operacao/<slug>/meta/insights.json` with the mockup numbers (Gasto R$ 4.820 / Leads 214 / Custo/lead R$ 22,52 / ROAS 3,8× / break-even 1,3× / hook 34% / hold 52% · CTR 2,1% / 3 ads: Reels-depoimento-01 5,1× vencedor, Estatico-grafico-02 3,6×, Carrossel-prova-03 2,4×). Make the fixture self-consistent (I3): `margin: 0.77`, `breakeven_roas: 1.3`. Set `synced_at` to **now** (a fresh ISO timestamp) for the primary "ready" diff so `hasFreshInsights` is true and the page renders the dashboard immediately without the auto-sync (I2/C3) kicking off a real run mid-screenshot. To exercise stale auto-sync separately, backdate `synced_at` past `MAGNUS_META_STALE_MIN` in a second pass.
+
+   **C2 — start command (both env vars are required):** the "Atualizar" button → `/api/run/start` → `findSkill("sincronizar-meta")`, which resolves via `MAGNUS_SKILLS_DIR` (override) → else `MAGNUS_PAINEL_CWD/.claude/skills`. The fixture workspace has NO skills, so without `MAGNUS_SKILLS_DIR` the run 404s. Point it at the plugin's skills:
+   ```bash
+   MAGNUS_PAINEL_CWD="<fixture-workspace>" \
+   MAGNUS_SKILLS_DIR="$HOME/Documents/Magnus/magnus-os-plugin/plugins/magnus-os/skills" \
+   npm run dev   # port 3737
+   ```
+   Then open `/c/<slug>`, click **Resultados**, and visually diff against `docs/mockups/dash-b.png`:
    - Tab "Resultados" present between "Visão geral" and (if on) "Tarefas".
    - KPI band, funnel strip, ad table ranked by ROAS, "vencedor" pill on the top ad, ROAS colored when above break-even, "gerar variação do vencedor" present.
-   - Toggle states: rename `insights.json` away → "no-link"/"no-data" empty state; remove the `meta` key from `.mcp.json` AND the files → "disconnected" connect state.
+   - Toggle states (driven by FILES now, per I1 — not the `.mcp.json` key):
+     - `link.json` + `insights.json` both present, fresh → **ready** (dashboard).
+     - `link.json` present, `insights.json` absent → **no-data** ("Sem dados ainda · Atualizar").
+     - both `link.json` AND `insights.json` absent → **disconnected** ("Conecte a Meta…"). (Note: the `meta` key staying in `.mcp.json` does NOT flip this to connected — that's the whole point of I1. The `MetaConnectBanner` above the workspace still keys off `.mcp.json`, so it may show "configured"; that's expected and separate.)
+     - `insights.json` present but `synced_at` older than `MAGNUS_META_STALE_MIN` → still renders the dashboard (stale), and auto-sync fires once in the background.
    Capture before/after screenshots as evidence.
 5. **Codex gate (fixed):** `/codex review` on the Inc 1 diff (both repos). Resolve every finding until **GATE PASS**. Per repo memory, codex catches runtime breaks tsc misses — do not skip.
 
@@ -1189,7 +1331,7 @@ Run from the painel repo:
 **Spec coverage (Inc 1 §46–58 + §5 + §5b + §7):**
 - ✅ Conexão Meta via official MCP (`mcp.facebook.com/ads`, HTTP, OAuth, read-only) — Tasks A1/A2; "Conecte a Meta" banner reusing `MCPConnectBanner` — A5.
 - ✅ `sincronizar-meta` skill writes `insights.json` (+ `synced_at`) per §5 — E1; triggered by "Atualizar" button (D2/D3) and auto on open if stale > 30min default (D3 effect + `getMetaStaleMinutes`).
-- ✅ BM↔campanha association: agent lists BM campaigns → writes `bm-campaigns.json` painel can read, auto name-match, user confirms → `link.json` (§5) — E1; painel reads via `lib/meta.ts` + `/api/meta` (B6/C1).
+- ✅ BM↔campanha association (M5 — **chat-driven in MVP**, intentional deviation from spec §Inc 1): the agent lists BM campaigns, auto name-matches, and confirms the binding **in chat**, writing `link.json` (§5) — E1. The painel renders **no** BM picker; it only reads `link.json` (drives `metaConnected`, I1) + `insights.json` via `lib/meta.ts` + `/api/meta` (B6/C1). No `readBmCampaigns`/`BmCampaign` (YAGNI). A painel-side picker is deferred to a later increment.
 - ✅ Dashboard variant B (locked, `dash-b.png`): KPI band (gasto/leads/custo-lead/ROAS w/ break-even), funnel strip (Atenção hook / Engajamento hold+CTR / Conversão CPA+ROAS), ad table ranked by ROAS (thumb+name+spend+hook+CTR+CPA+ROAS, "vencedor" pill, ROAS color), period control, connect/empty/loading/error states — D2; tab added to TabBar + store + workspace — A4/D1/D3.
 - ✅ Painel reads `insights.json`, NOT Graph API (file-first) — `lib/meta.ts` only touches the filesystem.
 - ✅ New lib helpers, pure where possible, with vitest — `meta-format.ts`/`meta.ts`/`meta-stale.ts` (TDD).
@@ -1199,14 +1341,25 @@ Run from the painel repo:
 
 **Placeholder scan:** no `TODO`/`FIXME`/`...`/`<placeholder>` in code blocks. All file paths absolute or repo-rooted; all commands concrete with expected output. The only deliberately-deferred items are the documented Inc 2c stub and the affordance line for live drill-down (per spec, Inc 1 ships the affordance, not the live drill).
 
-**Type consistency:** `insights.json`/`link.json` types in `lib/meta-types.ts` match spec §5 key-for-key (verified against §5 JSON). Funnel values documented as fractions 0..1 in both the skill and `pct()` formatter. `McpStatus` extended with `meta` in `types.ts` + initialized in `notion.ts` + `store.ts`. `activeTab` widened to include `"results"` in `store.ts` interface AND `setActiveTab` signature AND the `onChange` cast in `CampaignWorkspace`. `ModuleFlags` gains `meta` in interface + DEFAULTS + `getModules()` + test. No `any` anywhere.
+**Type consistency:** `insights.json`/`link.json` types in `lib/meta-types.ts` match spec §5 key-for-key (verified against §5 JSON). Funnel values documented as fractions 0..1 in both the skill and `pct()` formatter. `McpStatus` extended with `meta` in `types.ts` + initialized in `notion.ts` + `store.ts`. **`components/NotionConnectBanner.tsx` carries its OWN local `McpStatus`/`ServerKey`/`SERVER_LABELS`** (NOT imported from `lib/types`) — all three get the `meta` entry (C1, Task A5). `activeTab` widened to include `"results"` in `store.ts` interface AND `setActiveTab` signature AND the `onChange` cast in `CampaignWorkspace`. `ModuleFlags` gains `meta` in interface + DEFAULTS + `getModules()` + test. No `any` anywhere.
+
+**Eng-review fixes applied (C1–C3, I1–I4, M5/M6):**
+- **C1** — `NotionConnectBanner.tsx` local types (`McpStatus`+`ServerKey`+`SERVER_LABELS`) all edited for `meta` (Task A5); the `lib/types.ts` change does NOT propagate to this file.
+- **C2** — QA-visual start command exports `MAGNUS_SKILLS_DIR=…/magnus-os-plugin/plugins/magnus-os/skills` alongside `MAGNUS_PAINEL_CWD` so `findSkill("sincronizar-meta")` resolves; without it the "Atualizar" run 404s (Task E2).
+- **C3** — `syncingMeta` excludes `awaiting-input` (a finished turn sets `awaiting-input`, NOT `done`; `done` only on SSE close) → no permanent spinner hang; fresh insights → `ready` win the state machine; auto-sync ref resets on fresh insights (Task D3).
+- **I1** — `metaConnected`/route `connected` driven by real signal (`link.json`/`insights.json` presence), NOT the seeded `.mcp.json` key; "disconnected"/empty state is reachable again (Tasks C1, D3).
+- **I2** — auto-sync gated on real `metaConnected` + suppressed on `metaError` (no re-fire loop on tab toggle when sync keeps failing) (Task D3).
+- **I3** — fixtures obey `breakeven_roas = round(1/margin, 2)`; `margin 0.77 → 1.30` matches `dash-b.png`; painel trusts `breakeven_roas` as written (no recompute) (Tasks B4, E2, E1 Passo 3).
+- **I4** — `lib/meta.ts` coerces numeric fields via `Number(...)` on read (accepts number OR numeric string; rejects non-coercible → null); formatters/`sortAdsByRoas` never see strings; test feeds string-encoded numbers (Tasks B4, B6). Hardens against the recurring "API lies about types" bug.
+- **M5** — no `readBmCampaigns`/`BmCampaign` (chat-driven association; YAGNI); documented deviation.
+- **M6** — Task A1 verify is a HARD GATE: confirm `mcp__meta__*` tools actually load (`claude mcp list`/SDK smoke), with `type`→`transport` fallback; do not proceed until tools load.
 
 **Assumptions / validate-at-connect-time (flagged):**
 - **Exact Meta MCP tool names** (`mcp__meta__ads_insights_*`, list-campaigns, list-accounts) — the official server exposes ~29 tools but exact names vary by version; the skill lists `mcp__meta__*` at runtime and picks the read tools. **Validate at connect time.**
-- **`.mcp.json` server entry shape** — `{ "type": "http", "url": "https://mcp.facebook.com/ads" }`. If Claude Code expects `"transport"` instead of `"type"`, adjust to match `claude mcp list`; `readMcpStatus` only checks the `meta` key so it's robust. **Validate at connect time.**
+- **`.mcp.json` server entry shape** — `{ "type": "http", "url": "https://mcp.facebook.com/ads" }`, with `"transport"` as fallback. **This is a 🔴 HARD GATE (M6), not a soft assumption:** Task A1 must confirm `mcp__meta__*` tools actually LOAD (`claude mcp list` / SDK smoke), trying `type` then `transport`. `readMcpStatus` checking the `meta` key is NOT sufficient proof — if the shape is wrong the dashboard never gets data. Do not proceed past Phase A until tools load.
 - **`thumb`** may be an absolute Meta CDN URL (often short-lived/CORS) OR a workspace relpath; `AdThumb` handles both (`/api/files` for relpaths). If Meta thumbs 403 in `<img>`, a v2 improvement is to have the skill download them into `meta/thumbs/` — out of scope for Inc 1.
 - **`results` = leads** for the mockup's lead-gen campaign; for purchase campaigns `results`/`revenue`/`roas` carry through unchanged (labels stay "Leads"/"Custo / lead" per the locked layout; relabeling by objective is a later refinement).
-- Default **margin 0.9 → break-even 1.11** when the BRIEFING has no margin (mockup shows 1,3× from a 77% margin — both are valid; the skill prefers the BRIEFING's margin).
+- Default **margin 0.9 → break-even 1.11** when the BRIEFING has no margin; the skill prefers the BRIEFING's margin. Both this default and the mockup's `0.77 → 1.30` obey the `breakeven = round(1/margin, 2)` invariant (I3). The **test/QA fixture standardizes on `0.77 → 1.30`** to match `dash-b.png`. The painel never recomputes — it trusts `breakeven_roas` as written by the skill.
 
 **Spec ambiguity hit:**
 - Spec §7 lists "Cadência de auto-refresh (default 30 min; confirmar na prática)" as open — implemented as configurable `MAGNUS_META_STALE_MIN` (default 30), fires once per tab-open.

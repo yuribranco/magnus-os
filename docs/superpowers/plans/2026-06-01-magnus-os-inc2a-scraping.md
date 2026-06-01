@@ -4,7 +4,7 @@
 
 **Goal:** Build a "swipe file" of validated winning creatives for the company's niche — a `pesquisar-criativos` skill (runs in the client's local Claude Code) scrapes the Meta Ad Library via Apify, pairs each creative with its landing page, computes a composite validation score, names the angle with anchored evidence, and writes `contexto/ativos/swipe/<nicho>/`; the painel renders it as a score-ordered gallery with a stub "gerar variação on-brand" hook into Inc 2c.
 
-**Architecture:** File-first, same as the rest of Magnus OS. The **agent writes** (scrape → pair LP → score → write `index.json` + downloaded media + `lp-<ad_id>.txt`); the **painel only reads** the niche's `index.json` and serves the media via the existing `/api/files?p=` route. The composite-score function lives **painel-side** as a pure, vitest-tested module (`lib/creative-score.ts`) so the gallery can re-sort deterministically and the score is auditable; the skill computes the same score inline from the documented formula and writes it to the JSON (the painel never recomputes against the network — it sorts using the parsed `score`, and `creative-score.ts` is the single source of the formula both sides reference). The skill is a markdown `SKILL.md` modeled on `criar-criativo`/`lancar-campanha`, with a `panel:` block so it appears in the painel skills bar.
+**Architecture:** File-first, same as the rest of Magnus OS. The **agent writes** (scrape → pair LP → score → write `index.json` + downloaded media + `lp-<ad_id>.txt`); the **painel only reads** the niche's `index.json` and serves the media via the existing `/api/files?p=` route. The composite-score function lives **painel-side** as a pure, vitest-tested module (`lib/creative-score.ts`) so the gallery can re-sort deterministically and the score is auditable; the skill computes the same score inline from the documented formula and writes it to the JSON (the painel never recomputes against the network — it sorts using the parsed `score`, and `creative-score.ts` is the single source of the formula both sides reference). The skill is a markdown `SKILL.md` modeled on `criar-criativo`/`lancar-campanha`, with a `panel:` block (category `auditar`) so it's discoverable in `/api/skills`. **Launch surface:** unlike the campaign-scoped skills (the campaign workspace launches `grouped.auditar[0]` = checar-marca with `{ campanha }`), `pesquisar-criativos` is company/niche-level (NO campanha) — there is no global skills bar in this painel, so its launch surface is the `/swipe` page: a "Pesquisar criativos" button in `SwipeGallery` calls `startRun("pesquisar-criativos", {})` and the `GlobalSkillRunnerHost` mounted on `/swipe` renders the SkillRunner overlay with the skill's `start_form`. The skill's `start_form` has NO `campanha-picker` field, so `startRun` with an empty `{}` is sufficient — `SkillRunner` renders whatever fields the `start_form` declares (nicho/keywords/país) and requires no campanha.
 
 **Tech Stack:** Next.js 16 App Router · React 19 · TypeScript (no `any`) · Tailwind/CSS-vars design system (existing `styles/`) · vitest (existing) · Claude Agent SDK skill (markdown) · Apify actor `curious_coder/facebook-ads-library-scraper` (via Apify CLI/API token, invoked from the skill's `Bash`).
 
@@ -28,12 +28,12 @@ Both repos are committed by the controller — **do not run git in this plan's e
 ### Plugin (`magnus-os-plugin/plugins/magnus-os/`)
 - **Create:** `skills/pesquisar-criativos/SKILL.md` — the scraping/scoring/pairing skill (markdown, frontmatter + `panel:` block + body). Category `auditar` (it's intelligence/research, not production). Runs in the client's Claude Code, uses `Bash` for Apify + LP fetch, `Read`/`Write`/`Glob` for files.
 - **Create:** `skills/pesquisar-criativos/scripts/apify_adlibrary.sh` — thin wrapper: takes a JSON input file, runs the Apify actor synchronously, writes the run's dataset items to stdout as JSON. Keeps the actor id + endpoint in one auditable place (mirrors how `criar-criativo/scripts/gen_image.sh` isolates the Gemini call).
-- **Create:** `skills/pesquisar-criativos/scripts/fetch_lp.sh` — fetches a landing-page URL and emits readable text (strips tags). Isolates the LP capture so the SKILL body stays declarative.
+- **Create:** `skills/pesquisar-criativos/scripts/fetch_lp.sh` — fetches a landing-page URL and emits readable text (strips tags via a macOS-portable `python3` pass, NOT GNU-only `sed -I`). **Degrades, never aborts:** a failed fetch/parse yields empty stdout + exit 0 so one bad LP can't kill the skill under `set -euo pipefail`. Isolates the LP capture so the SKILL body stays declarative.
 - **Create:** `skills/pesquisar-criativos/references/angulos.md` — the named-angle taxonomy (Prova Social, Risco Zero, Economia de Tempo, Autoridade, Urgência, …) the skill maps each creative to. Self-contained so the skill never invents an angle.
 
 ### Painel (`magnus-painel/`)
-- **Create:** `lib/creative-score.ts` — pure functions: `compositeScore(signals)` → 0–1, plus the normalizers it composes (`normImpressions`, `normEngagement`, `normDaysActive`, `normVariations`). No `fs`, no network. Single source of truth for the formula.
-- **Create:** `lib/creative-score.test.ts` — vitest for the score + normalizers (boundary, monotonicity, weight-sum, clamping).
+- **Create:** `lib/creative-score.ts` — pure functions: `compositeScore(signals)` → 0–1, `signalConfidence(signals)` → 0–1 (fraction of the 4 signals present, floored 0.25), plus the normalizers it composes (`normImpressions`, `normEngagement`, `normDaysActive`, `normVariations`). No `fs`, no network. Single source of truth for BOTH the score and the confidence formula (the skill replicates them inline).
+- **Create:** `lib/creative-score.test.ts` — vitest for the score + confidence + normalizers (boundary, monotonicity, weight-sum, clamping, confidence flooring, degraded-mode ordering).
 - **Create:** `lib/swipe.ts` — `readSwipeBank(nicho)` + `listSwipeNichos()`: reads `contexto/ativos/swipe/<nicho>/index.json`, validates/parses against the schema, returns typed `SwipeBank`, re-sorts `creatives` by parsed `score` desc (defensive: never trusts file order). Server-side (`fs`), mirrors `lib/campaigns.ts`.
 - **Create:** `lib/swipe-parse.ts` — pure parser/validator `parseSwipeIndex(raw: unknown): SwipeBank` (no `fs`), so it's vitest-testable independent of disk. `lib/swipe.ts` reads the file and delegates to this.
 - **Create:** `lib/swipe-parse.test.ts` — vitest for the parser (valid byte-for-byte schema from spec §5, missing fields, malformed JSON, wrong types).
@@ -43,6 +43,7 @@ Both repos are committed by the controller — **do not run git in this plan's e
 - **Create:** `components/SwipeCreativeCard.tsx` — one creative tile (extends the `CreativeCard` visual language: thumb via `/api/files?p=`, ratio badge, score badge, angle pill, signals row).
 - **Create:** `app/swipe/page.tsx` — a top-level "Swipe file do nicho" view (server component: reads niches via `lib/swipe.ts`, renders `SwipeGallery`). Reachable from the Sidebar.
 - **Modify:** `components/Sidebar.tsx` — add a "Swipe file" nav item linking to `/swipe` (only the nav entry; gated nowhere — this is a core Inc 2 feature, not behind a module flag).
+- **Modify:** `app/api/files/route.ts` — add video MIME types (`.mp4 → video/mp4`, `.webm → video/webm`, `.mov → video/quicktime`) to the `MIME` map. The `SwipeCreativeCard` renders `.mp4` creatives through a `<video src="/api/files?p=...">`; the QA fixture (Task 9) includes a video. Without these, the route falls back to `application/octet-stream` and the `<video>` tile misrenders/fails to play.
 
 ### Niche keywords source (no schema change needed)
 `contexto/EMPRESA.md` already carries **Posicionamento**, **ICP** and **Ofertas** (see template). The skill derives niche keywords from those sections (Setor + Posicionamento + Ofertas + ICP dor) — **no new EMPRESA field is introduced** (YAGNI; the skill proposes derived keywords and asks the user to confirm/edit them, then persists the confirmed list to `contexto/ativos/swipe/<nicho>/keywords.json` for incremental refresh).
@@ -98,7 +99,7 @@ Actor input (written by the skill to a temp file before calling the wrapper):
 }
 ```
 
-> **Field availability is NOT guaranteed** — actor output schemas drift. The skill MUST tolerate missing fields: `impressions_bucket` (the 2026 bucket), per-post `engagement` (likes+comments+shares), `days_active` (from `ad_delivery_start_time`/first_seen), and `variations` (count of ads sharing the same creative/snapshot) may appear under different keys or be absent. The skill maps actor fields → our `signals` defensively and records `confidence` lower when signals are missing. **Validate the exact field names against one real run before trusting them** (see Task 4 dry-run + the "Assumptions" section). The Ad Library exposes the impressions bucket per ad as of 2026; post engagement is scraped from the ad's post.
+> **Field availability is NOT guaranteed** — actor output schemas drift. The skill MUST tolerate missing fields: `impressions_bucket` (the 2026 bucket), per-post `engagement` (likes+comments+shares), `days_active` (from `ad_delivery_start_time`/first_seen), and `variations` (count of ads sharing the same creative/snapshot) may appear under different keys or be absent. The skill maps actor fields → our `signals` defensively and records `confidence` lower when signals are missing. **Validate the exact field names against one real run before trusting them** (see **Task 10b** — the gating live-validation task, requires `APIFY_TOKEN` — + the "Assumptions" section). The Ad Library exposes the impressions bucket per ad as of 2026; post engagement is scraped from the ad's post.
 
 **Cost / ToS (spec §"Erros a evitar"):** each niche refresh = one actor run (~40 ads) ≈ low-single-digit USD on Apify compute; the skill **caches per niche** (writes `keywords.json` + `index.json`) and refreshes **incrementally** — on re-run it merges new `ad_id`s into the existing bank instead of re-downloading media that already exists on disk. The skill states the estimated cost before running and asks for confirmation.
 
@@ -119,14 +120,14 @@ score = 0.35 * normImpressions(impressions_bucket)
 
 **Normalizers (all clamp to [0,1]):**
 
-- `normImpressions(bucket: string)`: maps the Meta 2026 impressions bucket string to a 0–1 ordinal. Buckets are ranges like `"<1k"`, `"1k-5k"`, `"5k-10k"`, `"10k-50k"`, `"50k-100k"`, `"100k-200k"`, `"200k-500k"`, `"500k-1M"`, `">1M"`, plus the `"Low Impression Count"` badge → treated as `"<1k"`. Implemented as an ordered ladder: `index_of_bucket / (number_of_buckets - 1)`. Unknown/empty bucket → `0` (and lowers confidence). The ladder is defined as a `const BUCKET_LADDER: readonly string[]` with a normalization helper that lowercases + strips spaces so `"100k–200k"` (en-dash) and `"100k-200k"` both match.
+- `normImpressions(bucket: string)`: maps the Meta 2026 impressions bucket string to a 0–1 ordinal. **PROVISIONAL ladder** — the literal bucket label strings are confirmed against a real actor run in **Task 10b Step 3/4** and the ladder is reconciled there; until then these are the best-guess 2026 labels: `"<1k"`, `"1k-5k"`, `"5k-10k"`, `"10k-50k"`, `"50k-100k"`, `"100k-200k"`, `"200k-500k"`, `"500k-1M"`, `">1M"`, plus the `"Low Impression Count"` badge → treated as bottom of ladder (`0`). Implemented as an ordered ladder: `index_of_bucket / (number_of_buckets - 1)`. Unknown/empty bucket → `0` (and lowers confidence). The ladder is defined as a `const BUCKET_LADDER: readonly string[]` with a normalization helper (`canon`) that lowercases + strips spaces + normalizes dashes so `"100k–200k"` (en-dash) and `"100k-200k"` both match. **Note:** the bottom bucket (`"<1k"`) and `"Low Impression Count"` both normalize to `0` — and per the confidence rule, a bucket that normalizes to 0 does NOT count as a present signal.
 - `normEngagement(n: number)`: log-scaled, saturating. `clamp01(Math.log10(Math.max(n,0) + 1) / Math.log10(100000 + 1))` — so 0 reactions → 0, ~100k reactions → 1, with diminishing returns (10 → ~0.20, 1k → ~0.60, 10k → ~0.80). Negative/NaN → 0.
 - `normDaysActive(d: number)`: linear ramp saturating at 180 days (6 months live = a clear evergreen winner). `clamp01(Math.max(d,0) / 180)`. Negative/NaN → 0.
-- `normVariations(v: number)`: linear ramp saturating at 10 active variations. `clamp01(Math.max(v,0) / 10)`. 1 variation → 0.1; 10+ → 1. Negative/NaN → 0.
+- `normVariations(v: number)`: linear ramp saturating at 10 active variations. `clamp01(Math.max(v,0) / 10)`. **Absent variations → `0`** (NOT 1): a missing/unreported variation count carries no signal and must lower confidence, so it normalizes to 0 and counts as a MISSING signal. `1` is reserved for when the actor genuinely reports exactly one variation (→ 0.1). Negative/NaN → 0. This aligns the normalizer (`v<=0 → 0`), the skill's absent-default (`variations → 0`, fix I2), and the confidence calc (`variations>0` = present).
 
 `clamp01(x) = Math.min(1, Math.max(0, x))`. The final `score` is rounded to 3 decimals (`Math.round(x*1000)/1000`).
 
-**`confidence` (separate from score, also 0–1):** computed by the skill (not by `creative-score.ts`) as the fraction of the four signals that were actually present in the actor output (e.g. impressions + engagement present, days_active + variations missing → `0.5`), floored at `0.25`. Written to the JSON; the gallery surfaces it so a "winner" with low confidence is visibly hedged (D11: no hallucinated winner).
+**`confidence` (separate from score, also 0–1):** lives in the SAME tested pure module as `signalConfidence(signals): number` in `lib/creative-score.ts` — the fraction of the four signals that were actually present in the actor output (e.g. impressions + engagement present, days_active + variations missing → `0.5`), floored at `0.25`. A signal counts as present only when it carries real information: `normImpressions(bucket) > 0` for impressions, and `Number.isFinite(x) && x > 0` for engagement/days_active/variations (so an absent or zero `variations` is MISSING, never a free +0.25). The skill replicates this exact formula inline and writes `confidence` to the JSON; the painel only reads the written value (never recomputes against the network). The gallery surfaces it so a "winner" with low confidence is visibly hedged (D11: no hallucinated winner). Boundary cases (all-present → 1.0, none → floored 0.25, bottom-of-ladder bucket not counting) are covered by tests in `lib/creative-score.test.ts`.
 
 ---
 
@@ -196,10 +197,10 @@ Expected: exit 0, no errors. (Adding types only — nothing references them yet.
 
 ---
 
-### Task 2: Composite score — pure function (STRICT TDD)
+### Task 2: Composite score + signal confidence — pure functions (STRICT TDD)
 
 **Files:**
-- Create: `lib/creative-score.ts`
+- Create: `lib/creative-score.ts` (exports `clamp01`, `normImpressions`, `normEngagement`, `normDaysActive`, `normVariations`, `compositeScore`, `signalConfidence`)
 - Test: `lib/creative-score.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -214,6 +215,7 @@ import {
   normDaysActive,
   normVariations,
   compositeScore,
+  signalConfidence,
 } from "./creative-score";
 import type { CreativeSignals } from "./types";
 
@@ -317,6 +319,49 @@ describe("compositeScore", () => {
     const up: CreativeSignals = { ...base, impressions_bucket: ">1M" };
     expect(compositeScore(up)).toBeGreaterThan(compositeScore(base));
   });
+  it("degraded mode (engagement+variations forced to 0): still orders by impressions+days", () => {
+    // Quando o actor não devolve engagement nem variations, esses sinais caem a 0,
+    // mas a ordenação ainda funciona pelos dois sinais que sobram (impressões + dias).
+    const lo: CreativeSignals = { impressions_bucket: "1k-5k", engagement: 0, days_active: 20, variations: 0 };
+    const hi: CreativeSignals = { impressions_bucket: "100k-200k", engagement: 0, days_active: 160, variations: 0 };
+    expect(compositeScore(hi)).toBeGreaterThan(compositeScore(lo));
+    expect(compositeScore(lo)).toBeGreaterThan(0); // ainda produz ranking não-zero
+  });
+});
+
+describe("signalConfidence", () => {
+  it("all four signals present → 1.0", () => {
+    expect(
+      signalConfidence({ impressions_bucket: ">1M", engagement: 10, days_active: 5, variations: 3 }),
+    ).toBe(1);
+  });
+  it("two of four present → 0.5", () => {
+    expect(
+      signalConfidence({ impressions_bucket: "10k-50k", engagement: 100, days_active: 0, variations: 0 }),
+    ).toBe(0.5);
+  });
+  it("none present → floored at 0.25 (never 0)", () => {
+    expect(
+      signalConfidence({ impressions_bucket: "", engagement: 0, days_active: 0, variations: 0 }),
+    ).toBe(0.25);
+  });
+  it("unknown/empty bucket does NOT count as a present signal", () => {
+    expect(
+      signalConfidence({ impressions_bucket: "banana", engagement: 0, days_active: 0, variations: 0 }),
+    ).toBe(0.25);
+  });
+  it("bottom-of-ladder bucket (<1k → normImpressions 0) does NOT count as present", () => {
+    // só o bucket presente, mas no fundo da escada → não acrescenta confiança
+    expect(
+      signalConfidence({ impressions_bucket: "<1k", engagement: 0, days_active: 0, variations: 0 }),
+    ).toBe(0.25);
+  });
+  it("variations=0 counts as MISSING, variations>0 counts as present", () => {
+    const without = signalConfidence({ impressions_bucket: "10k-50k", engagement: 0, days_active: 0, variations: 0 });
+    const with1 = signalConfidence({ impressions_bucket: "10k-50k", engagement: 0, days_active: 0, variations: 1 });
+    expect(without).toBe(0.25); // 1 de 4 → 0.25
+    expect(with1).toBe(0.5); // 2 de 4 → 0.5
+  });
 });
 ```
 
@@ -339,7 +384,11 @@ export function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
 
-/** Escada ordinal dos buckets de impressão da Ad Library (2026), do menor pro maior. */
+/**
+ * Escada ordinal dos buckets de impressão da Ad Library (2026), do menor pro maior.
+ * PROVISÓRIO: os rótulos literais são confirmados contra um run real do Apify em
+ * Task 10b (Step 3/4) e a escada é reconciliada lá. `canon()` normaliza casing/espaço/traço.
+ */
 const BUCKET_LADDER: readonly string[] = [
   "<1k",
   "1k-5k",
@@ -388,7 +437,28 @@ export function compositeScore(s: CreativeSignals): number {
     0.15 * normVariations(s.variations);
   return Math.round(clamp01(raw) * 1000) / 1000;
 }
+
+/**
+ * Confiança (0–1) = fração dos 4 sinais REALMENTE presentes no output do actor,
+ * com piso 0.25. Um sinal está "presente" quando carrega informação real:
+ *  - impressions_bucket: string não-vazia que casa na escada (não "" / desconhecido).
+ *  - engagement: número finito > 0.
+ *  - days_active: número finito > 0.
+ *  - variations: número finito > 0 (variações de fato reportadas pelo actor; 0 = ausente).
+ * Fonte única da fórmula — a skill replica esta lógica inline (SKILL.md §Passo 7) e grava
+ * `confidence` no index.json. O painel só lê o valor gravado; nunca recalcula contra a rede.
+ */
+export function signalConfidence(s: CreativeSignals): number {
+  let present = 0;
+  if (normImpressions(s.impressions_bucket) > 0) present++;
+  if (Number.isFinite(s.engagement) && s.engagement > 0) present++;
+  if (Number.isFinite(s.days_active) && s.days_active > 0) present++;
+  if (Number.isFinite(s.variations) && s.variations > 0) present++;
+  return Math.max(0.25, present / 4);
+}
 ```
+
+> Nota de fronteira: `impressions_bucket` conta como presente apenas quando `normImpressions > 0`. Logo um bucket válido de fundo de escada (`"<1k"` → `normImpressions` retorna `0`) NÃO conta como sinal presente — é o comportamento desejado: um anúncio que só prova "<1k impressões" não acrescenta confiança. Os testes cobrem esse caso explicitamente (Step 1).
 
 - [ ] **Step 4: Run tests, confirm green**
 
@@ -629,6 +699,7 @@ Expected: exit 0.
 
 ```ts
 // app/api/swipe/route.ts
+import { NextResponse } from "next/server";
 import { listSwipeNichos, readSwipeBank } from "@/lib/swipe";
 
 export const runtime = "nodejs";
@@ -638,13 +709,15 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const nicho = url.searchParams.get("nicho");
   if (!nicho) {
-    return Response.json({ nichos: listSwipeNichos() });
+    return NextResponse.json({ nichos: listSwipeNichos() });
   }
   const bank = readSwipeBank(nicho);
-  if (!bank) return new Response("not found", { status: 404 });
-  return Response.json(bank);
+  if (!bank) return new NextResponse("not found", { status: 404 });
+  return NextResponse.json(bank);
 }
 ```
+
+> Uses `NextResponse.json` to match `app/api/campaigns/route.ts` (the painel's convention); the 404 is a `NextResponse` plain-text body. `Response.json`/`new Response` would also work but we standardize on `NextResponse`.
 
 - [ ] **Step 2: Typecheck + smoke**
 
@@ -654,6 +727,34 @@ Expected: exit 0.
 Manual smoke (after Task 9 has seeded a fixture, or with a hand-made fixture): `curl -s 'http://localhost:3737/api/swipe' ` → `{"nichos":[...]}`; `curl -s 'http://localhost:3737/api/swipe?nicho=<slug>'` → the bank JSON.
 
 - [ ] **Step 3: Commit** (controller): `feat(painel): /api/swipe lê o banco de validados (Inc 2a)`
+
+---
+
+### Task 5b: Video MIME types in `/api/files` (I4)
+
+**Files:**
+- Modify: `app/api/files/route.ts`
+
+The swipe gallery serves video creatives (`.mp4`) through the existing `/api/files?p=` route via a `<video>` element (Task 6). The route's `MIME` map currently has no video entries, so a `.mp4` falls back to `application/octet-stream` and the `<video>` tile won't render/play. Add the three video types.
+
+- [ ] **Step 1: Add video entries to the `MIME` map**
+
+In `app/api/files/route.ts`, extend the `const MIME: Record<string, string>` map (after the existing image/text entries, before the closing brace) with:
+
+```ts
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+```
+
+Leave the rest of the route (path-traversal guard, `runtime`/`dynamic`, the `MIME[ext] ?? "application/octet-stream"` fallback) untouched — this is purely additive.
+
+- [ ] **Step 2: Typecheck**
+
+Run (from painel root): `npm run typecheck`
+Expected: exit 0.
+
+- [ ] **Step 3: Commit** (controller): `feat(painel): MIME de vídeo no /api/files pro swipe (Inc 2a)`
 
 ---
 
@@ -784,18 +885,29 @@ Expected: exit 0.
 **Files:**
 - Create: `components/SwipeGallery.tsx`
 
-- [ ] **Step 1: Write the gallery** (niche selector if >1 niche; grid of `SwipeCreativeCard`; empty/loading states; the "gerar variação" stub posts nothing yet — it opens a toast/alert documenting the Inc 2c contract: `pesquisar-criativos` → `criar-criativo --variar <ad_id>`)
+- [ ] **Step 1: Write the gallery** (niche selector if >1 niche; grid of `SwipeCreativeCard`; empty/loading states; a **"Pesquisar criativos" launch button** in the header AND in the empty state — both call `startRun("pesquisar-criativos", {})`, which is how the skill is reached: there is NO global skills bar in the painel, and the campaign workspace only launches the campaign-scoped `grouped.auditar[0]` (= checar-marca). `pesquisar-criativos` is company/niche-level with no campanha, so `/swipe` is its launch surface. The `GlobalSkillRunnerHost` mounted on `app/swipe/page.tsx` (Task 8) renders the SkillRunner overlay with the skill's `start_form`; the "gerar variação" stub posts nothing yet — it opens an alert documenting the Inc 2c contract: `pesquisar-criativos` → `criar-criativo` no modo "variação a partir de referência")
 
 ```tsx
 "use client";
 
 import { useMemo, useState } from "react";
+import { Icons } from "@/components/icons";
 import { SwipeCreativeCard } from "@/components/SwipeCreativeCard";
+import { useStore } from "@/lib/store";
 import type { SwipeBank, SwipeCreative } from "@/lib/types";
 
 export function SwipeGallery({ banks }: { banks: SwipeBank[] }) {
   const [activeNicho, setActiveNicho] = useState(banks[0]?.nicho ?? "");
   const bank = useMemo(() => banks.find((b) => b.nicho === activeNicho) ?? banks[0], [banks, activeNicho]);
+  const startRun = useStore((s) => s.startRun);
+
+  // LAUNCH: pesquisar-criativos é company/niche-level (SEM campanha). O start_form da skill
+  // não tem campo `campanha-picker`, então startRun com {} basta — o SkillRunner (montado pelo
+  // GlobalSkillRunnerHost na /swipe) renderiza o form (nicho / keywords / país) e o usuário
+  // preenche ali. Não pré-preenchemos campanha porque essa skill não é campaign-scoped.
+  function onPesquisar() {
+    startRun("pesquisar-criativos", {});
+  }
 
   // Inc 2c hook (stub): a variação real é gerada pela skill criar-criativo no modo
   // "variação a partir de referência" (depende do Inc 2c). Por ora documentamos o contrato.
@@ -817,6 +929,9 @@ export function SwipeGallery({ banks }: { banks: SwipeBank[] }) {
         <div className="empty__sub">
           Rode a skill <strong>Pesquisar criativos</strong> — ela rola a Ad Library do seu nicho por você. De manhã, os vencedores estão aqui.
         </div>
+        <button className="btn btn--primary" type="button" onClick={onPesquisar} style={{ marginTop: 12 }}>
+          <Icons.search size={14} /> Pesquisar criativos
+        </button>
       </div>
     );
   }
@@ -827,6 +942,9 @@ export function SwipeGallery({ banks }: { banks: SwipeBank[] }) {
         <h1 style={{ fontSize: 22, fontWeight: 600, margin: 0 }}>Swipe file do nicho</h1>
         <span className="dim" style={{ fontSize: 13 }}>ele rola por você — de manhã os vencedores estão lá</span>
         <span className="spacer" style={{ flex: 1 }} />
+        <button className="btn btn--primary btn--sm" type="button" onClick={onPesquisar}>
+          <Icons.search size={13} /> Pesquisar criativos
+        </button>
         {banks.length > 1 && (
           <div style={{ display: "flex", gap: 6 }}>
             {banks.map((b) => (
@@ -957,7 +1075,7 @@ Expected: first → `{"nichos":["saude-auditiva"]}`; second → the bank JSON wi
 
 - [ ] **Step 4: QA visual (use the `/browse` gstack skill)**
 
-Open `http://localhost:3737/swipe`. Verify: gallery renders, cards ordered by score (highest first), angle pills + score badge + confidence + paired-LP summary visible, thumbs load, "Gerar variação on-brand" shows the Inc 2c stub alert, "Ver na Ad Library" link present. Check the empty state by pointing at a template with no swipe dir. Confirm the design matches `docs/designs/DESIGN.md` conventions (cards/pills/accent — flag any deviation).
+Open `http://localhost:3737/swipe`. Verify: gallery renders, cards ordered by score (highest first), angle pills + score badge + confidence + paired-LP summary visible, thumbs load, the **video tile renders/plays** (the `.mp4` fixture, served with the new `video/mp4` MIME from Task 5b), "Gerar variação on-brand" shows the Inc 2c stub alert, "Ver na Ad Library" link present, and the **"Pesquisar criativos" header button opens the SkillRunner overlay** (don't submit — no Apify spend). Check the empty state by pointing at a template with no swipe dir: confirm the empty state shows and its **"Pesquisar criativos" CTA also opens the SkillRunner overlay**. Confirm the design matches `docs/designs/DESIGN.md` conventions (cards/pills/accent — flag any deviation).
 
 - [ ] **Step 5: Remove the fixture** (it was for QA only; the real bank is written by the skill). Do not commit the fixture media.
 
@@ -1021,21 +1139,39 @@ curl -s -X POST \
   --data @"${INPUT}"
 ```
 
-- [ ] **Step 3: Write `scripts/fetch_lp.sh`** (fetches a URL, strips to readable text; no extra deps — uses `curl` + a `sed`/`tr` tag strip; the agent does the semantic extraction of headline/offer/proof from this text)
+- [ ] **Step 3: Write `scripts/fetch_lp.sh`** (fetches a URL, strips to readable text; the agent does the semantic extraction of headline/offer/proof from this text)
+
+> **macOS/BSD-sed safety + degrade-not-abort (I5).** The original `sed -e 's/<script...>.*</script>//gI'` used the GNU-only `I` (case-insensitive) flag, which **errors on macOS BSD sed**, and combined with `set -euo pipefail` that error **hard-aborts the whole skill** on a single bad LP. The strip is also unreliable across multi-line `<script>` blocks. Replace it with a macOS-portable Python tag-strip (`python3` ships on macOS), and make LP-fetch failure **degrade** (emit empty stdout + non-fatal) rather than kill the run — the SKILL body treats empty LP text as "LP ausente → campos vazios + confidence menor", never as an abort.
 
 ```bash
 #!/usr/bin/env bash
-# Baixa uma landing page e imprime texto legível (tags removidas).
+# Baixa uma landing page e imprime texto legível (tags removidas) no stdout.
+# DEGRADA em vez de abortar: se a busca/strip falhar, imprime vazio e sai 0
+# (o SKILL trata LP vazia como "ausente" → confidence menor; NUNCA mata a run).
 # Uso: fetch_lp.sh <url>
-set -euo pipefail
+# NOTA: sem `pipefail` de propósito — um curl/parse ruim numa LP não pode derrubar
+# a skill inteira. Erros são engolidos e viram "LP ausente".
+set -u
 if [ "$#" -ne 1 ]; then echo "Uso: $0 <url>" >&2; exit 1; fi
 URL="$1"
-curl -sL --max-time 25 -A "Mozilla/5.0 (MagnusOS swipe)" "$URL" \
-  | sed -e 's/<script[^>]*>.*<\/script>//gI' -e 's/<style[^>]*>.*<\/style>//gI' \
-  | sed -e 's/<[^>]*>/ /g' \
-  | tr -s ' \t\n' ' ' \
-  | head -c 8000
+
+HTML="$(curl -sL --max-time 25 -A "Mozilla/5.0 (MagnusOS swipe)" "$URL" 2>/dev/null || true)"
+if [ -z "$HTML" ]; then exit 0; fi   # fetch falhou → LP ausente, degrada
+
+# Strip portável (macOS traz python3): remove <script>/<style>, demais tags,
+# colapsa espaços, e corta em 8000 chars. Qualquer erro → stdout vazio (degrada).
+printf '%s' "$HTML" | python3 -c '
+import sys, re
+html = sys.stdin.read()
+html = re.sub(r"(?is)<script.*?</script>", " ", html)
+html = re.sub(r"(?is)<style.*?</style>", " ", html)
+text = re.sub(r"(?s)<[^>]*>", " ", html)
+text = re.sub(r"\s+", " ", text).strip()
+sys.stdout.write(text[:8000])
+' 2>/dev/null || true
 ```
+
+> The SKILL body (§Passo 5) already says "Sem LP → campos vazios + confidence menor" — this script now makes that literally true: a failed fetch or parse yields empty stdout and exit 0, so `set -euo pipefail` in the calling skill steps never trips on one bad LP.
 
 - [ ] **Step 4: Write `SKILL.md`** — frontmatter (category `auditar`, `allowed-tools` scoped to the two scripts + Read/Write/Glob + mkdir/date), `panel:` block (start_form: niche keywords textarea prefilled from EMPRESA, country select), and a decomposed body (D11 §5b.7: deliberate steps, not a mega-prompt):
 
@@ -1106,8 +1242,8 @@ Leia `/tmp/apify-out.json`. **Mapeie os campos defensivamente** — os nomes do 
 - `impressions_bucket` ← `impressionsText` / `impressions` / bucket de impressões (NOVO 2026). Ausente → "".
 - `engagement` ← soma de likes+comments+shares do post (ex: `reactionCount`+`commentCount`+`shareCount`). Ausente → 0.
 - `days_active` ← hoje − `adDeliveryStartTime`/`startDate`. Ausente → 0.
-- `variations` ← `totalActiveTime` count / nº de cards do mesmo snapshot / `collationCount`. Ausente → 1.
-> Se um sinal faltar, registre e **abaixe o `confidence`** (fração dos 4 sinais presentes, piso 0.25). NUNCA invente número.
+- `variations` ← nº de cards do mesmo snapshot / `collationCount` / contagem de anúncios que compartilham o mesmo criativo. **Ausente → `0`** (NÃO 1): variação não reportada = sinal ausente, conta como MISSING e abaixa o `confidence`. Reserve `1` só quando o actor reporta de fato exatamente uma variação.
+> Se um sinal faltar, registre e **abaixe o `confidence`** (fração dos 4 sinais presentes, piso 0.25). Um sinal só conta como presente quando carrega informação real: impressões com bucket que casa na escada (>0), e engagement/days_active/variations finitos e > 0. NUNCA invente número.
 
 ## Passo 4 — Baixar mídia
 Pra cada anúncio (top N por sinais brutos, default 12), baixe a mídia pra `${DIR}/<ad_id>.jpg|mp4`:
@@ -1135,7 +1271,7 @@ eng  = clamp01( log10(engagement+1) / log10(100001) )
 days = clamp01( days_active / 180 )
 var  = clamp01( variations / 10 )
 ```
-Arredonde a 3 casas. `confidence` = fração dos 4 sinais presentes (piso 0.25).
+Arredonde a 3 casas. `confidence` = fração dos 4 sinais REALMENTE presentes (piso 0.25) — idêntico a `signalConfidence` em `lib/creative-score.ts`. Presente = bucket que casa na escada (>0) + engagement/days_active/variations finitos e > 0. Logo `variations=0` (ausente) NÃO conta como presente. Nunca recalculado pelo painel; o valor gravado aqui é o que a galeria mostra.
 
 ## Passo 8 — Gravar `index.json` (schema §5, byte-for-byte)
 Escreva `${DIR}/index.json` ordenado por `score` desc, no schema EXATO (campos: ad_id, advertiser, file, format, score, confidence, signals{impressions_bucket,engagement,days_active,variations}, angle, source_evidence, landing{url,headline,offer,proof,captured}, ad_url, first_seen). Em refresh, faça merge com os existentes e re-ordene.
@@ -1153,15 +1289,62 @@ Run: `chmod +x /Users/yuribranco/Documents/Magnus/magnus-os-plugin/plugins/magnu
 Run: `claude plugin validate /Users/yuribranco/Documents/Magnus/magnus-os-plugin/plugins/magnus-os`
 Expected: PASS (no schema errors in the new SKILL.md frontmatter). If `claude plugin validate` is unavailable in the env, fall back to: parse the frontmatter with `node -e` using `gray-matter` (already a painel dep) and assert `name`, `description`, `allowed-tools`, and `panel.category === "auditar"` are present.
 
-- [ ] **Step 7: Documented dry-run** (no real Apify spend)
+- [ ] **Step 7: Documented dry-run via the `/swipe` launcher** (no real Apify spend)
 
-Verify the skill surfaces in the painel skills bar under "auditar" by running the painel against a template that has the plugin skills dir wired (`MAGNUS_SKILLS_DIR` pointing at the plugin skills). Confirm: the skill appears, the `start_form` renders (nicho input, keywords textarea, país select). Do NOT trigger a real run in this step (that spends Apify); the live run is validated by the user with a real `APIFY_TOKEN` (see Final Verification + Assumptions).
+Run the painel against a template that has the plugin skills dir wired (`MAGNUS_SKILLS_DIR` pointing at the plugin skills) so `pesquisar-criativos` is returned by `/api/skills` (the `GlobalSkillRunnerHost` resolves the skill by slug). Open `http://localhost:3737/swipe` and click **"Pesquisar criativos"** (header button, and the empty-state CTA when no bank exists). Confirm:
+- The SkillRunner overlay opens (driven by `startRun("pesquisar-criativos", {})` → `GlobalSkillRunnerHost`).
+- The `start_form` renders its fields: **nicho** input, **keywords** textarea, **país** select — and crucially NO campanha-picker / no campanha is required (the skill is company/niche-level). If the SkillRunner ever demanded a campanha here, that's a bug — the skill's `start_form` declares no `campanha-picker`, so `startRun({})` must render the form and let "Começar" submit without a campanha.
+
+Do NOT click "Começar" in this step (that spends Apify); the live run is validated by the user with a real `APIFY_TOKEN` (see Task 10b + Final Verification + Assumptions).
 
 - [ ] **Step 8: Commit** (controller): `feat(plugin): skill pesquisar-criativos — scrape Apify + LP pareada + score (Inc 2a)`
 
 ---
 
+### Task 10b: Live Apify field-validation — ONE real run (requires APIFY_TOKEN — Yuri provides)
+
+> **GATING TASK — runs BEFORE the final gate (Task 11), but the score is only TRUSTED once this passes.** Until it does, the score runs in **degraded mode**: signals that aren't confirmed present in real output normalize to 0 and `confidence` drops (the ranking still works, hedged). This is the #1 thing to verify on first live use (Assumptions #1). **Requires a real `APIFY_TOKEN` — Yuri provides it; do not fabricate a token or skip the assertions.** If no token is available at execution time, mark this task BLOCKED (not done) and proceed to Task 11 with the score explicitly flagged degraded; do NOT mark the plan complete with this task skipped silently.
+
+- [ ] **Step 1: One small real actor run**
+
+With `APIFY_TOKEN` set in the client/template `.env`, run the actor wrapper once with a SMALL count (cost control) for a real niche keyword:
+
+```bash
+cat > /tmp/apify-validate-in.json <<'JSON'
+{ "searchTerms": ["zumbido no ouvido"], "country": "BR", "adActiveStatus": "active", "adType": "all", "count": 5 }
+JSON
+/Users/yuribranco/Documents/Magnus/magnus-os-plugin/plugins/magnus-os/skills/pesquisar-criativos/scripts/apify_adlibrary.sh /tmp/apify-validate-in.json > /tmp/apify-validate-out.json
+```
+
+- [ ] **Step 2: Dump ONE dataset item to disk + inspect the real field names**
+
+```bash
+node -e 'const a=require("/tmp/apify-validate-out.json"); require("fs").writeFileSync("/tmp/apify-item.json", JSON.stringify(a[0]??a,null,2))'
+```
+Read `/tmp/apify-item.json` and record the ACTUAL keys present (e.g. is it `adArchiveID` or `ad_archive_id`? where does the impressions bucket live? is per-post engagement even returned?).
+
+- [ ] **Step 3: ASSERT the four source fields are reachable + capture the REAL impressions-bucket label strings**
+
+For each of the four signals, confirm a real source key in the item (mapping per Task 10 §Passo 3) and **write down the literal impressions-bucket label strings** the actor emits (e.g. `"1K-5K"`, `"100K-200K"`, `"Low Impression Count"`). These literal strings drive the `BUCKET_LADDER` in `lib/creative-score.ts` (see Minor M1) — `canon()` lowercases + strips spaces, so capture casing/spacing/dash style so the ladder matches.
+
+Required outcome — for EACH of `impressions_bucket`, `engagement` (likes+comments+shares), `days_active` (from `adDeliveryStartTime`/start date), `variations` (collation/snapshot card count):
+- **Present** → record the exact source key → our field mapping.
+- **Absent** → this is a **decision point, NOT a silent degrade**. Document the branch:
+  - If `engagement` is absent: the actor doesn't expose per-post engagement → decide **re-weight** (redistribute the 0.25 engagement weight across impressions/days) OR **drop** the engagement term — and update `lib/creative-score.ts` weights + tests accordingly. Do not leave a permanent silent 0 that quietly tanks every score.
+  - If `variations` is absent: confirm whether the actor ever reports collation/variation count. If never, decide **drop** the 0.15 variations term (re-weight to the other three) vs. keep it as a rarely-present signal. Document the choice in Assumptions #2/#3.
+  - `impressions_bucket` / `days_active` are expected present (Ad Library 2026); if either is absent, escalate — the score's top weights depend on them.
+
+- [ ] **Step 4: Reconcile `BUCKET_LADDER` with the captured strings (Minor M1)**
+
+If the real bucket labels differ from the provisional ladder in `lib/creative-score.ts`, update `BUCKET_LADDER` (and the matching test cases in `lib/creative-score.test.ts`) to the real canonicalized strings. Re-run `npx vitest run lib/creative-score.test.ts` → PASS.
+
+- [ ] **Step 5: Record findings + commit any weight/ladder changes** (controller): `fix(painel): ladder/pesos do score ancorados em output real do Apify (Inc 2a)`. Note in the Assumptions section that field names are now VERIFIED (or list which branch was taken). Update the wiki entry (Task 11 Step 4) with the captured bucket strings.
+
+---
+
 ### Task 11: Final verification + gates
+
+> **Sequencing:** Task 10b (live Apify validation) runs BEFORE this gate and gates *trusting* the score. If Task 10b is BLOCKED (no `APIFY_TOKEN` yet), Task 11 can still PASS on a degraded-mode score — but the plan is only fully "done" once Task 10b is unblocked and the field names/ladder are verified. Flag the degraded state explicitly in the wiki entry (Step 4).
 
 - [ ] **Step 1: Full painel test + typecheck + build**
 
@@ -1173,9 +1356,9 @@ Expected: typecheck exit 0; vitest all green (existing + new `creative-score.tes
 
 - [ ] **Step 2: QA visual of the gallery** — re-run the Task 9 fixture + `/browse` pass on `http://localhost:3737/swipe`. Confirm score ordering, angle pills, paired-LP summary, score/confidence badges, video tile, empty state, and DESIGN.md adherence. Remove fixture after.
 
-- [ ] **Step 3: `/codex review` gate (fixed gate, AGENTS.md §3 / gstack-gates)** — run `/codex review` on the combined diff (both repos). Required verdict: **PASS**. Fix anything codex flags, re-run until PASS. Pay attention to: defensive Apify field mapping (no crash on missing fields), the `confidence` flooring, score clamping at boundaries, path-traversal safety of the niche slug in `/api/files` (the slug comes from a directory name read by `listSwipeNichos`, so it can't traverse — confirm), and that the painel never recomputes score against the network.
+- [ ] **Step 3: `/codex review` gate (fixed gate, AGENTS.md §3 / gstack-gates)** — run `/codex review` on the combined diff (both repos). Required verdict: **PASS**. Fix anything codex flags, re-run until PASS. Pay attention to: defensive Apify field mapping (no crash on missing fields), the `confidence`/`signalConfidence` flooring (0.25) and the rule that absent/zero signals (incl. `variations=0`, bottom-of-ladder bucket) count as MISSING, score clamping at boundaries, the `fetch_lp.sh` degrade-not-abort behavior (one bad LP must not kill the run), path-traversal safety of the niche slug in `/api/files` (the slug comes from a directory name read by `listSwipeNichos`, so it can't traverse — confirm), the new video MIME entries, and that the painel never recomputes score against the network.
 
-- [ ] **Step 4: Wiki + Drive** (deliverable cycle): document in `~/Documents/Pessoal/wiki/wiki/projects/magnus-os.md` Session log (what shipped, files, the score formula, the recommended actor, the "validate field names against real actor output" caveat). No Drive upload (code lives in git).
+- [ ] **Step 4: Wiki + Drive** (deliverable cycle): document in `~/Documents/Pessoal/wiki/wiki/projects/magnus-os.md` Session log (what shipped, files, the score + `signalConfidence` formula, the recommended actor, the captured real impressions-bucket label strings from Task 10b — or the degraded-mode flag if Task 10b is still BLOCKED on `APIFY_TOKEN`, plus any drop/re-weight decision taken). No Drive upload (code lives in git).
 
 ---
 
@@ -1191,8 +1374,8 @@ Expected: typecheck exit 0; vitest all green (existing + new `creative-score.tes
 - Any write to Meta / own-account top performers (that's Inc 2b, depends on Inc 1).
 
 ## Assumptions / ambiguity to flag
-1. **Apify actor field names are NOT verified against a live run.** `impressions_bucket`, per-post `engagement`, `days_active`, `variations` are mapped defensively (Task 10 §Passo 3) but the exact keys (`adArchiveID` vs `ad_archive_id`, where the impressions bucket lives, whether engagement is even returned by this actor) **must be validated against one real run with a real `APIFY_TOKEN`** before the score is trusted in production. If the actor doesn't return per-post engagement, that signal degrades to 0 and `confidence` drops — the formula still produces a (hedged) ranking. **This is the #1 thing to verify on first live use.**
-2. **Score weights (0.35/0.25/0.25/0.15) are a defensible first cut, not empirically tuned.** They're isolated in `lib/creative-score.ts` so tuning is a one-line change + a test update. Revisit after the first real niche pull.
-3. **`variations` default = 1** when absent (an ad is at least one variation); confirm the actor exposes a real variation/collation count or this signal is effectively flat.
+1. **Apify actor field names are NOT verified against a live run — verified by Task 10b.** `impressions_bucket`, per-post `engagement`, `days_active`, `variations` are mapped defensively (Task 10 §Passo 3) but the exact keys (`adArchiveID` vs `ad_archive_id`, where the impressions bucket lives, whether engagement is even returned by this actor) **must be validated against one real run with a real `APIFY_TOKEN`** before the score is trusted in production. **This validation is Task 10b** (gating, requires APIFY_TOKEN — Yuri provides). Until it passes, the score runs in **degraded mode** (unconfirmed signals → 0, confidence floored at 0.25; ranking still works hedged). If the actor doesn't return per-post engagement or variations, Task 10b treats it as a **decision point** (drop/re-weight the term + update `lib/creative-score.ts` weights & tests), NOT a permanent silent 0. **This is the #1 thing to verify on first live use.**
+2. **Score weights (0.35/0.25/0.25/0.15) are a defensible first cut, not empirically tuned.** They're isolated in `lib/creative-score.ts` so tuning is a one-line change + a test update. Revisit after the first real niche pull — and re-weight here if Task 10b finds a signal the actor never returns.
+3. **`variations` absent default = `0`** (NOT 1), so a missing/unreported variation count carries no signal and counts as MISSING for `confidence`. `1` is reserved for when the actor genuinely reports exactly one variation. Task 10b confirms whether the actor exposes a real variation/collation count at all; if it never does, the 0.15 variations term is a re-weight/drop decision point there.
 4. **Niche keywords** come from `EMPRESA.md` free-text via agent extraction + user confirmation — quality depends on a filled EMPRESA.md. The skill asks rather than guesses silently.
 5. **Video thumbs**: `SwipeCreativeCard` renders `.mp4` via a muted `<video>`; if a niche returns mostly video and that's heavy, a future step could capture a poster frame in the skill. Out of scope now.
