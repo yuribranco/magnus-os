@@ -48,12 +48,14 @@ Ordem de build: **Inc 0 → (Inc 1 ∥ Inc 2a) → Inc 2b → Inc 2c**. Cada tra
 - **Conexão:** trocar Notion/Canva no `.mcp.json` pelo MCP oficial da Meta. Onboarding vira "Conecte a Meta" (OAuth read-only; reusa o padrão do `ApiKeyBanner`/`MCPConnectBanner`).
 - **Puxada:** skill **`sincronizar-meta`** → o agente chama as tools de insights do MCP → grava `operacao/<slug>/meta/insights.json` (+ nível de conta). Disparada por: botão "Atualizar" no dashboard, e auto ao abrir a campanha se `synced_at` estiver velho (> N min; default N=30).
 - **Associação BM↔campanha:** UI lista campanhas da BM (via MCP) → **match automático por nome** (sugere a campanha BM com nome ~ slug/displayName) → cliente **confirma** → grava `meta/link.json`. 1 campanha do painel → 1+ campanhas da BM.
-- **Dashboard:** dentro da aba Visão geral, renderiza do `insights.json` na hierarquia de funil:
+- **Dashboard (layout TRAVADO via companion 2026-06-01 = variante B): aba "Resultados" dedicada** (ao lado de Visão geral; Visão geral segue focada em assets). Conteúdo da aba Resultados, renderizado do `insights.json` na hierarquia de funil:
   1. **Atenção** — hook rate (3s views ÷ impressões), 3s views.
   2. **Engajamento** — hold rate (15s ÷ 3s), CTR (outbound).
   3. **Conversão** — CPA/custo por lead, ROAS (**com margem** — exibir break-even), faturamento, ticket.
-  - KPIs de topo (gasto, leads/vendas, CPA, ROAS+margem) → drill-down conta→campanha→adset→ad→criativo → comparação de período + sparkline → estados de loading/erro/vazio caprichados ("Conecte a Meta pra ver resultados").
-  - **Layout finalizado via companion visual** (passo pré-implementação), reusando o design system do painel (`/ui-ux-pro-max` + tokens/componentes existentes).
+  - KPI band (gasto, leads/vendas, custo/lead, ROAS **com break-even/margem**) → faixa de funil compacta (Atenção/Engajamento/Conversão) → **tabela de anúncios ranqueada por ROAS** (thumb + nome + gasto + hook + CTR + CPA + ROAS; pill "vencedor" no topo; drill-down conta→adset→ad→criativo) → controle de período + comparação.
+  - **Gancho pro Inc 2c:** na linha do anúncio vencedor, ação "gerar variação do vencedor".
+  - Estados caprichados: vazio/desconectado ("Conecte a Meta pra ver resultados"), loading (sincronizando), erro.
+  - **Layout TRAVADO** (companion 2026-06-01, variante B), no design system real do painel. Mockup de referência: `dash-b.png`.
 
 ### Inc 2a — Scraping de validados do nicho (∥ ao Inc 1)
 **Objetivo:** banco de criativos vencedores do nicho da empresa, auto-surfaced (estilo Spyglass), com análise de funil de qualidade.
@@ -153,8 +155,9 @@ Padrões de segurança do MCP (do `konquest`): tiers read/supervised/advisory + 
 - EU/DSA reach/demografia — enriquecimento opcional, não bloqueia o MVP do 2a.
 
 ## 7. Itens abertos (resolver na implementação)
-- Layout do dashboard → **companion visual** (passo pré-Inc 1).
+- ~~Layout do dashboard~~ → **RESOLVIDO** (companion 2026-06-01 = variante B, aba Resultados; mockup `docs/mockups/dash-b.png`).
 - Cadência de auto-refresh (default 30 min; confirmar na prática).
+- Estados connect/empty/erro + UX da associação BM↔campanha: direção visual herdada do skin do painel (cards/pills); detalhe no plano do Inc 1.
 - Tool exato do MCP oficial pra cada métrica (validar nomes ao conectar de verdade).
 - Actor Apify específico + custo por puxada de nicho (validar no Inc 2a).
 
