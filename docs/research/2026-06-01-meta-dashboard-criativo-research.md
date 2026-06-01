@@ -91,9 +91,16 @@ Dashboard dentro da campanha com a hierarquia atenção→engajamento→convers�
 [8 ferramentas 2026](https://adlibrary.com/posts/meta-ad-library-scraping-tools), [Apify](https://apify.com/curious_coder/facebook-ads-library-scraper)
 
 ### Como identificar "validado"/vencedor (o insight afiado) 🟡
-- **Sinal fraco (o óbvio):** longevidade do anúncio (tempo no ar) + nº de variações ativas + volume. Quase todo mundo usa.
-- **Sinal forte (do Spyglass, vale roubar):** **outlier score contra a baseline da própria marca** — o que está performando *acima do normal daquele anunciante*, não só "o que está no ar há mais tempo". Bem mais preciso pra dizer "isso é vencedor".
-- **Top da própria conta:** ranking dos teus ads ativos por métrica (ROAS/CPA/hook rate) via insights do Caminho A.
+
+**Update 2026-06-01 (research de follow-up):** dá pra ir MUITO além de proxy de longevidade. Sinais públicos reais hoje disponíveis pra criativo de concorrente:
+- 🟡 **Faixa de impressões por anúncio (NOVO 2026):** entre jan–abr/2026 a Meta expandiu o filtro de impressões de "só políticos" pra **TODOS os anúncios**. Cada anúncio na Ad Library carrega um bucket de impressões (ordenável; <100 impressões = badge "Low Impression Count"). Sinal de **alcance** por anúncio do nicho. [admapix](https://www.admapix.com/blog/ad-intelligence/facebook-ads-library-complete-guide), [adlibrary](https://adlibrary.com/meta-ads-library)
+- 🟡 **Engajamento do post scrapeado** (likes/reactions/comentários/shares): é exatamente como **AdSpy/Dropispy/Pipiads** acham vencedor — leem o engajamento direto do post do anúncio e ordenam por isso. Engajamento público correlaciona com CTR. [proven-saas](https://proven-saas.com/blog/12-best-facebook-ads-spy-tools-for-2026-find-winning-ads), [graphed](https://www.graphed.com/blog/how-to-see-post-engagement-on-facebook-ad)
+- 🟡 **EU/DSA:** pra anúncios entregues na UE, a Ad Library API expõe reach + demografia + targeting de TODOS os ads. Mais rico onde o nicho tem presença EU. [Transparency Center](https://transparency.meta.com/researchtools/ad-library-tools)
+- **Longevidade + nº de variações ativas** seguem como sinais de "investimento sustentado".
+
+**DECISÃO (Yuri, 2026-06-01): score composto FORTE, estilo Spyglass.** Validação de criativo de nicho = **faixa de impressões + engajamento do post scrapeado + longevidade + nº de variações** → composto que chega perto de um outlier real, do jeito que os spy tools entregam. Trade-off aceito: scraping mais pesado + custo Apify maior + mais cinza de ToS (mitigado pelos actors do Apify). EU/DSA fica como enriquecimento opcional onde aplicável.
+
+- **Top da própria conta (sinal MAIS forte):** ranking dos teus ads ativos por **performance real** (ROAS/CPA/hook rate) via insights do Caminho A — aqui é outlier-vs-baseline de verdade, não proxy.
 
 ### Geração de variações on-brand SEM plágio 🟠
 - **"Variação" ≠ copiar pixel.** Significa **reverse-engineering da ESTRUTURA** (hook, layout, ângulo, oferta, mecânica visual) → **recriar pra marca do cliente** (paleta/voz/logo via `contexto/DESIGN.md`+`VOZ.md`+`checar-marca`).
@@ -106,7 +113,7 @@ Dashboard dentro da campanha com a hierarquia atenção→engajamento→convers�
 [Atria — best AI ad tools](https://www.tryatria.com/blog/best-ai-ad-tools-for-creative-analysis)
 
 ### Recomendação
-Track de criativo = **(2a)** scraping de nicho via **Apify** (já temos) + Ad Library, gravando num "banco de validados" por empresa/nicho com **outlier score** (não só longevidade); **(2b)** ranking dos top-performers da própria conta (depende do Caminho A); **(2c)** `criar-criativo` ganha modo "variação a partir de referência" (estrutura, não cópia). UX: galeria de criativos validados (estilo swipe file) → "Gerar variação on-brand" em 1 clique → a imagem aparece inline (a mágica que já construímos na v1).
+Track de criativo = **(2a)** scraping de nicho via **Apify** (já temos) + Ad Library, gravando num "banco de validados" por empresa/nicho com **score composto** (faixa de impressões + engajamento do post + longevidade + nº de variações — decisão "forte estilo Spyglass"); **(2b)** ranking dos top-performers da própria conta por performance REAL (depende do Caminho A); **(2c)** `criar-criativo` ganha modo "variação a partir de referência" (estrutura, não cópia). UX: galeria de criativos validados (estilo swipe file) → "Gerar variação on-brand" em 1 clique → a imagem aparece inline (a mágica que já construímos na v1).
 
 ### Armadilhas
 - ❌ Copiar criativo do concorrente pixel-a-pixel → plágio + off-brand. Sempre reconstruir a estrutura na marca.
