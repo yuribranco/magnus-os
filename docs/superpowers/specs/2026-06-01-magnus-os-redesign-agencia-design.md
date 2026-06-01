@@ -1,7 +1,7 @@
 # Spec — Magnus OS: redesign para Agências de Lançamento de Infoproduto
 
 **Data:** 2026-06-01
-**Status:** design aprovado (brainstorming), aguardando review do Yuri → writing-plans por track
+**Status:** design aprovado. **Inc 0 (enxugar) SHIPPED** em master (painel `c750ebe` + plugin `b731738`, 2026-06-01: flags reversíveis, codex gate PASS, QA visual ✓). Próximo: companion do dashboard → Inc 1 ∥ Inc 2a.
 **Pesquisa de base:** `docs/research/2026-06-01-meta-dashboard-criativo-research.md`
 
 ## 1. Visão / posicionamento
