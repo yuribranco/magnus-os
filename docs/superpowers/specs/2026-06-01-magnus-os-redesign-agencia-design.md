@@ -56,21 +56,24 @@ Ordem de build: **Inc 0 → (Inc 1 ∥ Inc 2a) → Inc 2b → Inc 2c**. Cada tra
   - **Layout finalizado via companion visual** (passo pré-implementação), reusando o design system do painel (`/ui-ux-pro-max` + tokens/componentes existentes).
 
 ### Inc 2a — Scraping de validados do nicho (∥ ao Inc 1)
-**Objetivo:** banco de criativos vencedores do nicho da empresa, auto-surfaced (estilo Spyglass).
+**Objetivo:** banco de criativos vencedores do nicho da empresa, auto-surfaced (estilo Spyglass), com análise de funil de qualidade.
 - Skill **`pesquisar-criativos`** → keywords do nicho (do `EMPRESA.md`) → **Apify (Ad Library actor)** → baixa criativos → calcula **score composto (decisão "forte")**: faixa de impressões (novo 2026) + **engajamento do post scrapeado** (likes/comentários/shares) + longevidade (dias no ar) + nº de variações ativas. (EU/DSA reach/demografia = enriquecimento opcional onde houver presença EU.)
-- Grava `contexto/ativos/swipe/<nicho>/` (criativos + `index.json` ordenado por score).
+- **Pareia a landing page (decisão MVP):** pra cada criativo, scrapeia a LP linkada → extrai texto legível (headline, bullets, oferta, garantia, prova social, FAQ) → análise lê o **funil inteiro** (hook→ângulo→oferta→LP), não só a imagem. Maior salto de qualidade (padrão dos repos de referência + Spyglass).
+- **Análise ancorada em evidência:** o agente extrai o **ângulo nomeado** (taxonomia: Prova Social, Risco Zero, Economia de Tempo, Autoridade, Urgência, etc.) e cada achado carrega `source_evidence` + `confidence` (sem "vencedor" alucinado).
+- Grava `contexto/ativos/swipe/<nicho>/` (criativos + LP capturada + `index.json` ordenado por score).
 - UX: galeria/swipe file ordenada por score; framing "ele rola por você, de manhã os vencedores estão lá".
 - **Spyglass = referência, não integração.** Produzimos resultado similar com fonte própria (Ad Library via Apify).
 
 ### Inc 2b — Top performers da própria conta
 **Objetivo:** ranquear teus criativos vencedores por performance REAL.
 - Lê `insights.json` (Inc 1) → rankeia ads ativos por ROAS/CPA/hook rate → view "vencedores" (outlier-vs-baseline real, não proxy).
+- **Normalização por arquétipo:** comparar ads por objetivo/tipo de campanha (não número cru) → ranking justo (padrão do `konquest`).
 - Depende do Inc 1.
 
 ### Inc 2c — Variações on-brand
 **Objetivo:** `criar-criativo` gera variações a partir de uma referência vencedora.
 - Estende `criar-criativo` com modo **"variação a partir de referência"**: aceita um criativo do swipe bank (2a) OU um top-performer da conta (2b).
-- Pipeline: agente **analisa a estrutura** (hook/layout/ângulo/oferta) — NÃO copia pixel → gera conceito on-brand (paleta/voz/logo via `contexto/DESIGN.md`+`VOZ.md`) → **Gemini (img2img/reference-conditioned)** → `checar-marca` → sai 1:1 + 9:16 → aparece inline (mágica da v1).
+- Pipeline: agente **analisa a estrutura** (hook/layout/**ângulo nomeado**/oferta + sinais da LP pareada) — NÃO copia pixel → gera conceito on-brand **grounded no `contexto/`** (ICP/voz/objeções/paleta/logo, padrão "vault-driven") → **Gemini (img2img/reference-conditioned)** → `checar-marca` → sai 1:1 + 9:16 → aparece inline (mágica da v1).
 - Depende de 2a/2b (precisa de referências).
 
 ## 4. Decisões travadas (log)
@@ -86,6 +89,8 @@ Ordem de build: **Inc 0 → (Inc 1 ∥ Inc 2a) → Inc 2b → Inc 2c**. Cada tra
 | D7 | Scraping via Apify (já temos acesso) | Reuso; actors lidam com engajamento + ToS |
 | D8 | Spyglass = referência, não integração | Sem API pública; replicamos o resultado |
 | D9 | Layout do dashboard via companion + design system existente | Decisão do Yuri |
+| D10 | Landing page pareada com o criativo no MVP | Maior salto de qualidade da análise (funil inteiro); padrão dos refs + Spyglass |
+| D11 | Reusar metodologia (não código) dos refs GitHub; análise grounded + evidência + ângulos nomeados | Qualidade de análise séria (research GitHub) |
 
 ## 5. Schemas de arquivo (contrato)
 
@@ -116,12 +121,29 @@ Ordem de build: **Inc 0 → (Inc 1 ∥ Inc 2a) → Inc 2b → Inc 2c**. Cada tra
   "source": "apify:ad-library",
   "creatives": [
     { "ad_id": "...", "advertiser": "...", "file": "<ad_id>.jpg", "format": "1:1|9:16|video",
-      "score": 0.0,
+      "score": 0.0, "confidence": 0.0,
       "signals": { "impressions_bucket": "...", "engagement": 0, "days_active": 0, "variations": 0 },
-      "ad_url": "...", "first_seen": "...", "landing": "..." }
+      "angle": "prova-social|risco-zero|economia-tempo|autoridade|urgencia|...",
+      "source_evidence": "ex: 'no ar há 142d, 3.4k reações, 6 variações ativas'",
+      "landing": { "url": "...", "headline": "...", "offer": "...", "proof": "...", "captured": "lp-<ad_id>.txt" },
+      "ad_url": "...", "first_seen": "..." }
   ]
 }
 ```
+
+## 5b. Qualidade da análise de criativo — padrões validados (research GitHub 2026-06-01)
+
+Busca no GitHub (refs: `nsonderborg/competitor-creative-intelligence`, `Gurpreet7999/AI-Competitor-Research-Creative-Intelligence-Engine`, `brandu-mos/konquest-meta-ads-mcp`, `minimaxir/facebook-ad-library-scraper`). Conclusão: **não reinventar** (scraping via Apify; agente via MCP oficial), mas **reusar a metodologia** que dá qualidade:
+
+1. **Funil pareado** — criativo + landing page analisados juntos (decisão MVP, Inc 2a).
+2. **Evidência ancorada** — todo hook/ângulo/variação carrega `source_evidence` + `confidence`; sem alucinar "vencedor".
+3. **Ângulos nomeados** — taxonomia (Prova Social, Risco Zero, etc.) em vez de "uma variação genérica".
+4. **Grounding no `contexto/`** ("vault-driven") — ICP/voz/objeções → output on-brand, não genérico (Inc 2c).
+5. **Normalização por arquétipo** — rankear ads por objetivo/tipo, não número cru (Inc 2b).
+6. **Loop de feedback** (aprovado/rejeitado → regenera) — qualidade contínua. **→ v2** (fora do MVP).
+7. **Decomposição por tarefa** — passos deliberados (analisar visual / extrair ângulo / sintetizar variação), não um mega-prompt.
+
+Padrões de segurança do MCP (do `konquest`): tiers read/supervised/advisory + tudo criado pausado → valida o **read-only no MVP** (D4).
 
 ## 6. Fora de escopo (YAGNI / depois)
 - Write na Meta (criar/pausar campanha) — read-only no MVP.
