@@ -152,13 +152,30 @@ DIFERENTE** — confirmar no teste de contrato que o actor suporta. (2) keyword 
 relevância** (filtrar por nicho/idioma/país + Yuri confirma quais páginas viram "concorrente"). Sem
 isso, "descoberta" é lixo. Resultado-alvo: "Concorrentes que você não conhecia" (momento-uau).
 
-## Apify — actor pinado + teste de contrato (PRÉ-BUILD, FIX codex S1)
-Actors Apify são namespaced e variam de schema. **Antes de codar:** rodar teste de contrato ao vivo
-com 1-2 actors candidatos (ex: `automly/facebook-ad-library-scraper`, `scraperhive/meta-ads-library-
-scraper`, ou o `apify~facebook-ads-scraper` já testado) e **pinar owner+versão**. Verificar: suporta
-keyword search? devolve `page_id` canônico? `ad_archive_id` estável? campos de data? pricing/scrape.
-Adapter (`lib/integrations/apify/adapter.ts`) isola o actor (swappable). **Coerce de tipo `String(v)`**
-no parser (lição: APIs mentem sobre tipo).
+## Apify — teste de contrato RODADO (2026-06-02) ✅ PASS + modelo de custo
+Actor testado e **pinado: `apify/facebook-ads-scraper`** (token STARTER do Yuri).
+**Input real:** `{ startUrls:[{url}], scrapeAdDetails:true, activeStatus:"active" }` (NÃO `urls`/`count`).
+
+**Feasibility PASS:**
+- Keyword search funciona (URL `.../ads/library/?...&q=<kw>&search_type=keyword_unordered&country=BR`):
+  achou 5.794 ads pra "emagrecer".
+- Campos confirmados populados: `pageId` (canônico), `adArchiveId`, `startDateFormatted`, **`isActive`
+  (vem da API → usar direto, não inferir)**, `collationCount`, `snapshot.{body.text, ctaText,
+  displayFormat, images, videos, cards, linkUrl}`. `spend/impressions/reach` = **NULL no BR** (confirma
+  persistence-score).
+
+**🔴 Modelo de custo (cobrança por compute-time, não por resultado):**
+| Operação | Custo medido | Nota |
+|---|---|---|
+| Scrape por anunciante (`view_all_page_id`) | **$0,12**, 10 ads, rápido | ROTINA barata e bounded |
+| Discovery keyword amplo | **$3,95** + TIMEOUT 240s | scrapeia TODOS (5.794), **sem cap funcional** (`count` ignorado) |
+
+**Implicação no design:** discovery = operação RARA + CAPADA (precisa cravar o cap: testar `maxItems`
+run-param OU pegar só 1ª página de resultados); scrape-por-anunciante = operação rotineira ($0,12,
+cache 7d). **Dogfood pode começar com concorrentes NOMEADOS** (scrape direto barato) e ligar a
+auto-descoberta capada depois. STARTER = $29/mês → a $0,12/anunciante o cache é o que segura o COGS.
+
+Adapter (`lib/integrations/apify/adapter.ts`) isola o actor (swappable). **Coerce `String(v)`** no parser.
 
 ## Cache / dedup (o coração de H mesmo em A)
 - Anunciante: se `last_scraped_at` < TTL(7d) → serve do DB, **pula Apify** (economiza COGS).
