@@ -152,11 +152,13 @@ plataforma de host; acesso gated por licença. A definir no /plan-eng-review (Q2
 - `APIFY_TOKEN` (existe, STARTER). winner-score (handoff, validado). Emissor de licença Magnus OS
   (existe). Claude API server-side (chave do Yuri — nova dependência de custo).
 
-## The Assignment
-**Antes de levantar o servidor, conseguir 1 "sim, eu pagaria R$X/mês" de um mentorado nomeado.**
-Caminho mais rápido: rodar o **concierge (Approach C) uma vez** — pega 1 concorrente de 1 mentorado
-real, roda Apify+Claude na mão, entrega o brief, e pergunta "pagaria R$X/mês por isso toda semana?".
-Dinheiro/compromisso na mesa de 1 pessoa nomeada destrava o build do MVP magro com risco baixíssimo.
+## The Assignment — DISPENSADA (2026-06-02): Yuri valida por dogfood
+~~Antes de levantar o servidor, conseguir 1 "sim, eu pagaria" de um mentorado.~~ **Yuri decidiu
+construir de qualquer jeito e ser o próprio teste** — ele roda lançamento, então é usuário-alvo de
+fato; vai usar o Radar como se fosse mentorado. **Validação = dogfood do próprio Yuri**, não
+concierge externo. → Caminho direto pro build: `/plan-eng-review` do servidor online (travar as Open
+Questions) → writing-plans → MVP magro. Buscar o "pagaria" de mentorado externo fica pra depois do
+MVP rodar (pré-pricing/lançamento do Radar como produto).
 
 ## What I noticed about how you think
 - Tu não disse "os mentorados querem" — disse "vejo eles fazendo isso na mão hoje". Isso é a melhor
