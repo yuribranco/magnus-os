@@ -6,11 +6,16 @@ Status: APPROVED
 Mode: Startup (intrapreneurship — produto pra vender dentro do Magnus OS)
 Supersedes: complementa `2026-06-01-radar-kickoff-brief.md` (resolve a decisão de arquitetura que o brief deixou aberta)
 
-## ⚙️ Atualização de arquitetura (2026-06-02) — DECISÃO FINAL: 100% online / server-hosted (A)
+## ⚙️ Atualização de arquitetura (2026-06-02) — FORMA FINAL: coletor central → seção no painel Magnus (= Híbrido H)
 
-> Histórico das viradas: office-hours fechou em **A** → Yuri reabriu "por que não local?" e foi pra
-> **Híbrido H** → Yuri reconsiderou e **travou em A (100% online)**. Esta é a decisão vigente. As
-> seções H e a Premise #2 abaixo ficam só como registro do raciocínio.
+> Histórico das viradas: office-hours fechou em **A** → "por que não local?" → **Híbrido H** →
+> **A 100% online standalone** → **FORMA FINAL: coletor central que alimenta o painel Magnus** (sem
+> portal próprio). O Radar **não é um portal/SaaS à parte**: é um **coletor** (Apify token do Yuri +
+> cache `radar.*` no Supabase) cujo output aparece numa **seção "Radar" dentro do `magnus-painel`
+> local**, como **insumo pra criativo novo** (ângulos/linhas que funcionam). O painel lê `radar.*`
+> direto (já fala com esse Supabase) — sem UI/login/API standalone. Isso é, na prática, o **Híbrido H**
+> (coleta central, consumo+geração no painel local). Plano de eng: `2026-06-02-radar-fase1-plan.md`.
+> O bloco "A 100% online" abaixo fica como registro; a saída mudou de portal próprio → seção no painel.
 
 **Decisão do Yuri (2026-06-02, final):** o **Radar é 100% online (server-hosted)**, produto
 **standalone pra vender**. O **Magnus OS local PUXA os dados do Radar** (via API/sync) pra construir

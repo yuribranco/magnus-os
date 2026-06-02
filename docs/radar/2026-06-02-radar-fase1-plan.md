@@ -8,21 +8,29 @@ Repo novo a criar: `yuribranco/radar` (local `~/Documents/Magnus/radar`).
 **Validação = Yuri dogfoodando** (único usuário na Fase 1). Construir o núcleo de inteligência,
 deferir toda a infra de vender pra Fase 2.
 
-### IN SCOPE (Fase 1)
-1. Coleta via Apify (actor `facebook-ads-scraper`, token do Yuri no server).
-2. Auto-descoberta: seed keyword → Ad Library search → páginas de anunciante (concorrentes).
-3. winner-score determinístico (longevity + variation + velocity; API-only, sem spend/engajamento).
-4. Cache/dataset no Supabase (dedup por anunciante + TTL de frescor).
-5. Painel web ranqueado (board de cards, single-user, sem login multi-tenant).
+> **RE-ESCOPO 2026-06-02 (final): SEM portal próprio.** O Radar é um **coletor** que alimenta o
+> **painel Magnus** (`magnus-painel`, já existe). Não tem UI/login standalone. O painel ganha uma
+> seção "Radar" que **lê o `radar.*` direto do Supabase** (o painel já fala com esse Supabase) e
+> mostra ads/ângulos/linhas que funcionam = **insumo pra criativo novo**. Mata o build de UI
+> standalone + auth multi-tenant. Na prática é o **Híbrido H** (coleta central, consumo+geração no
+> painel local). Objetivo: insumo pra novos criativos, não dashboard-produto à parte.
 
-### NOT in scope (deferido p/ Fase 2 — vender)
+### IN SCOPE (Fase 1)
+1. Coleta via Apify (actor pinado, token do Yuri).
+2. Auto-descoberta: seed keyword → Ad Library search → páginas de anunciante (concorrentes).
+3. persistence-score determinístico (longevity + variation + velocity; API-only, sem spend/engajamento).
+4. Cache/dataset no Supabase `radar.*` (dedup por anunciante + TTL + lifecycle ativo/inativo).
+5. **Seção "Radar" no `magnus-painel`** — lê `radar.*`, board ranqueado de cards (ads/ângulos/linhas
+   que funcionam), como insumo de criativo. Reusa a UI/design system do painel. **Sem portal/login novo.**
+
+### NOT in scope (deferido p/ Fase 2)
 | Item | Por quê defere |
 |---|---|
-| Login multi-tenant + auth de produto | Yuri é o único usuário no dogfood |
-| Gating por licença Hotmart | reusa o `magnus-os-licenca` quando for vender |
-| Quota de scrape por usuário | guardrail de COGS só importa com >1 usuário (Fase 1 = cap fixo no código) |
-| API autenticada pro Magnus OS puxar | contrato formal de consumo é da Fase 2; no dogfood Yuri gera o brief direto |
-| Geração do brief de ângulo | roda no Magnus OS LOCAL (decisão travada); fora do server do Radar |
+| Portal/UI/login standalone | MORTO — saída é a seção Radar no painel Magnus |
+| API autenticada pro consumo externo | o painel lê `radar.*` direto (mesma Supabase); API autenticada só se vender Radar a quem NÃO tem Magnus OS |
+| Gating por licença Hotmart / multi-tenant | reusa a licença do Magnus OS quando relevante; dogfood = single-user |
+| Quota de scrape por usuário | guardrail de COGS só com >1 usuário (Fase 1 = cap fixo no código) |
+| Geração do brief de ângulo | roda no Magnus OS LOCAL (decisão travada); o Radar só entrega o insumo |
 | Monitoramento contínuo / alertas | v2 |
 | TikTok / orgânico / deep-spy (SSRF) | v2 |
 
@@ -32,37 +40,45 @@ deferir toda a infra de vender pra Fase 2.
 ENTRADA: [concorrentes nomeados]  +  [seed keywords]
                 │
                 ▼
-        ┌──────────────────────┐
-        │  Radar (Next.js)     │
-        │  POST /api/scan      │
-        └──────────────────────┘
+        ┌──────────────────────────┐
+        │  COLETOR Radar           │   ← peça "online" do produto (Apify token do Yuri)
+        │  (API route / cron)      │
+        └──────────────────────────┘
                 │
-   seed keyword ├──► cache `searches` (TTL 7d)? ──hit──► páginas do DB
+   seed keyword ├──► cache `radar.searches` (TTL 7d)? ──hit──► páginas do DB
                 │         └──miss──► Apify Ad Library search ──► extrai advertiser pages ──► upsert
                 │
-  advertiser pg ├──► cache `advertisers.last_scraped_at` < 7d? ──hit──► ads do DB
-                │         └──miss──► Apify facebook-ads-scraper ──► upsert `ads` (dedup ad_archive_id)
+  advertiser pg ├──► cache `radar.advertisers.last_scraped_at` < 7d? ──hit──► ads do DB
+                │         └──miss──► Apify (actor pinado) ──► upsert `radar.ads` (dedup ad_archive_id
+                │                     + lifecycle ativo/inativo)
+                ▼
+        grava em  radar.*  (Supabase do Portal Magnus)
                 │
                 ▼
-        winner-score (determinístico, calculado on-read das colunas de `ads`)
+        ┌──────────────────────────┐
+        │  magnus-painel (LOCAL)   │   ← já existe; lê radar.* direto, sem portal/API novos
+        │  nova seção "Radar"      │
+        └──────────────────────────┘
+                │
+        persistence-score (on-read) → board ranqueado
+        card = thumb + badge "rodando há Xd" + nº variações reais + media-mix + hook + link LP
                 │
                 ▼
-        PAINEL: board ranqueado
-        card = thumb + badge "rodando há Xd" + nº variações + formato + hook + link LP
-                │
-                └─[FASE 2] botão "gerar criativo no Magnus OS" / API pull autenticada
+        insumo p/ criativo novo (brief/ângulo gerado no Magnus OS LOCAL, Claude do cliente)
 ```
 
 ## Stack
-- **App único Next.js** (App Router; API routes + UI). Reusa o design system do `magnus-painel`
-  (componentes on-brand). [Layer 1: boring — mesma stack que o resto do Magnus.]
-- **Supabase = reusar o do Portal Magnus** (D1 decidido pelo Yuri — credenciais já existem no
-  `release.sh`). **Mitigação do acoplamento:** tabelas do Radar num **schema próprio `radar.*`**
-  (não `public`), pra um split/migração futura (se vender o Radar separado) ser um `pg_dump -n radar`
-  limpo, e pra um problema no Portal não respingar. Service role no server.
-- **Apify** via adapter (`lib/integrations/apify/adapter.ts`, contrato `Adapter<TInput,TOutput>`) —
-  provider abstrato, actor swappable (comunidade no MVP, custom depois).
-- **Deploy infra-agnóstico** (target parametrizado; alvo pretendido Giba `2.25.145.187`, migratable).
+- **Coletor** = peça nova online (API route / cron) que roda Apify + score + escreve `radar.*`. Pode
+  nascer como rota no próprio `magnus-painel` ou um serviço magro à parte. **Decisão fina no build**
+  (pro dogfood, uma rota/script que o Yuri dispara já basta; vira serviço hosted quando escalar).
+- **Saída = seção "Radar" no `magnus-painel`** (já existe; lê `radar.*` direto). Reusa UI/design system.
+  **Sem app/portal/login novo.**
+- **Supabase = reusar o do Portal Magnus** (D1, Yuri). Tabelas em **schema `radar.*`** (não `public`)
+  → split/migração futura = `pg_dump -n radar` limpo; problema no Portal não respinga. Service role no coletor.
+- **Apify** via adapter (`lib/integrations/apify/adapter.ts`, `Adapter<TInput,TOutput>`) — provider
+  abstrato, actor pinado+swappable. Coerce `String(v)` no parser.
+- **Deploy:** o painel já tem o caminho dele (local/release). O coletor, se virar serviço: infra-agnóstico
+  (alvo Giba `2.25.145.187`, migratable). Pro dogfood pode rodar do Mac/local.
 
 ## Schema Supabase (Fase 1) — schema `radar.*` no projeto do Portal Magnus
 ```
