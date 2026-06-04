@@ -615,8 +615,14 @@ cd ~/Documents/Magnus/radar && git add ecosystem.config.cjs && git commit -q -m 
 - **Isolamento mínimo:** cache de ads continua compartilhado (é a feature); `license_usage` já é por-licença; **auditoria** = request-id + license-hash nos logs. Sem RLS completa (fica pra consolidação do servidor).
 - **Termos:** explicitar no produto que dados públicos de anúncios são cacheados/compartilhados entre clientes (reduz custo/latência).
 
-### Contrato de API revisado
-`POST /v1/scan` req: `{ slug?, niche?, competitors: ["@handle" | "https://instagram.com/handle", ...] }` — **≤3, deduplicado, formato validado**. O serviço resolve cada handle → pageId (cache em `radar.advertisers.ig_handle`). Resposta inclui `meta: { cache_hits, scraped, quota_remaining, degraded, failed: [] }`.
+### Contrato de API revisado (atualizado pós-SPIKE 2026-06-04)
+**SPIKE da resolução RODADO:** busca por keyword resolve pra páginas FB com pageId ✅, MAS é **fuzzy** — "marco rebucci" devolveu 2 páginas (Fitness 42 ads / Consultoria 8 ads); pegar a maior auto-erraria. **Conclusão: o resolver NÃO auto-escolhe — devolve candidatas e o cliente confirma.** Isso unifica "resolver concorrente nomeado" e "descobrir nicho" num mecanismo só.
+
+**Dois endpoints (em vez de scan+discover separados):**
+- `POST /v1/search` req `{ term }` (um @handle, nome, ou nicho) → res `{ candidates: [{ page_id, page_name, ads_count }], capped_at }`. Keyword search via actor, **persiste no cache** os ads que já scrapeou (não descarta), cota=discovery, top-N. A skill mostra as candidatas; o cliente escolhe ≤3.
+- `POST /v1/scan` req `{ slug?, niche?, pageIds: [...] }` — **≤3 pageIds JÁ confirmados** (vindos do /search), deduplicados, validados (`^\d+$`). Resolve via cache (hit) ou scrape (miss, cota=scan). Res = payload do board + `meta: { cache_hits, scraped, quota_remaining, degraded, failed: [] }`.
+
+Fluxo da skill: cliente dá @handle/nome/nicho → `/v1/search` → mostra candidatas → cliente confirma ≤3 → `/v1/scan` (quase tudo cache, porque o /search já aqueceu). Sem auto-resolução fuzzy, sem digitar pageId.
 
 ### Correções por task (P1 🔴 / P2 🟡)
 **Task 1 (cache):** 🟡 `isFresh` recebe `ttlDays` (default 7) lido de `RADAR_TTL_DAYS` no server — não hardcodar (o secret existia sem uso).
