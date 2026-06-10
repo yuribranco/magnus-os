@@ -857,6 +857,8 @@ op run --env-file=.env.op -- bash -c '
 
 ## Task 8: Substrato de deploy — health server + infra files
 
+> **STATUS 2026-06-10 — ✅ ARQUIVOS FEITOS (`magnus-os-online` `04acec0`).** Adaptado pro **VPS COMPARTILHADO do Portal** (`72.60.241.64`), NÃO dedicado como o plano assumia. `bootstrap.sh` reescrito: aditivo/idempotente, **sem `ufw enable`**, sem reconfigurar nginx/redis/pm2-startup do Portal (só cria user `deploy` c/ unit pm2 próprio + paths). Health server smoke-testado local (`/api/health` ok). `deploy.yml` commitado **separado e segurado** — token `gh` sem escopo `workflow` (pendente: `gh auth refresh -h github.com -s workflow`). **Task 9 (provisionar ao vivo) BLOQUEADA**: minha chave (`id_ed25519`) não autorizada como root no VPS do Portal.
+
 **Files:**
 - Create: `ONLINE/package.json`, `ONLINE/server.mjs`, `ONLINE/ecosystem.config.cjs`, `ONLINE/infra/bootstrap.sh`, `ONLINE/infra/nginx-magnusos.conf`, `ONLINE/.github/workflows/deploy.yml`
 
