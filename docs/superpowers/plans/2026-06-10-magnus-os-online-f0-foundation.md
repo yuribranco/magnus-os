@@ -1,6 +1,8 @@
 # Magnus OS Online — F0 Foundation — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Modo de execução DECIDIDO (Yuri, 2026-06-10): subagent-driven.** Bloqueado pela Task 0 (manual). Quando ela estiver feita, dispatch de subagent fresco por task com review em duas etapas.
 
 **Goal:** Fundação multi-tenant do Magnus OS Online — assinatura na Hotmart provisiona tenant + usuário Auth num **projeto Supabase dedicado**, com identidade por **assinante** (não por transação), ledger de eventos de webhook, RLS, `cost_ledger` com teto por plano, e substrato de deploy (domínio + nginx + TLS + Redis + CI/CD) com health check no ar.
 
