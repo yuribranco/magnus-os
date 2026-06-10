@@ -1,7 +1,8 @@
 # Magnus OS — Hosted Multi-Tenant SaaS — Design Spec (blueprint)
 
 **Data:** 2026-06-01
-**Status:** ⚠️ **BLUEPRINT — NÃO PARA IMPLEMENTAÇÃO IMEDIATA.** Decisão do Yuri (2026-06-01): a **direção ativa continua local-first** (terminar a implementação local do funil low-ticket primeiro). Este spec é o plano completo, pronto pra executar **quando** ele decidir migrar pra hosted. Não seguir pra `writing-plans` nem código sem nova autorização.
+**Status:** ✅ **ATIVADO em 2026-06-10** — o Yuri deu o GO pro hosted ("Vamos fazer o MagnusOS online"). Spec vigente: `2026-06-10-magnus-os-online-gestao-design.md`, que herda SP-0/SP-1/SP-2 deste blueprint com 3 mudanças (platform-key primeiro em vez de BYO; model-picker por skill; camada determinística como jobs de sistema). Este doc segue como referência técnica dos sub-projetos.
+~~⚠️ BLUEPRINT — NÃO PARA IMPLEMENTAÇÃO IMEDIATA. Decisão do Yuri (2026-06-01): a direção ativa continua local-first.~~
 **Origem:** sessão de brainstorming (`/superpowers:brainstorming`) após análise de FinOps completa. Decisões travadas via Q&A interativo.
 
 ---
