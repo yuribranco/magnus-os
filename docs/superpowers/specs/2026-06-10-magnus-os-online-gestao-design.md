@@ -26,6 +26,8 @@
 
 **Herdado como desenhado:** SP-0 (Supabase Auth magic-link + provisioning via `hotmart-webhook` já LIVE; RLS por `tenant_id`; workspace durável em Storage `tenant-workspaces/<id>/`; Redis self-hosted; domínio+nginx+CI/CD espelhando Portal Magnus; ~$45/mês fixo) e SP-1 (executor = **sandbox efêmero por run**: hidrata Storage → injeta credenciais → Agent SDK → SSE → sync de volta → grava usage → morre; base = refactor do `magnus-painel`, não rewrite).
 
+> ⚠️ **Auth do executor (travado 2026-06-10, addendum pós-15/06):** o sandbox injeta `ANTHROPIC_API_KEY` (chave de plataforma do Magnus) no ambiente do Agent SDK — **NUNCA OAuth de assinatura**. Billing é **por token (API)**, o que (a) honra "Magnus paga a API embutida no preço", (b) mantém o `cost_ledger` como enforcement de margem real, e (c) **isola o hosted da mudança de billing de 15/06** (que só atinge uso autenticado por assinatura — i.e., o produto LOCAL). Detalhe: `2026-06-10-cost-premise-post-15jun-addendum.md`.
+
 **Mudanças vs blueprint:**
 1. **`plan.key_source: "platform"` é o incremento 1** (era 2). `cost_ledger` deixa de ser medição e vira **enforcement**: teto por plano, bloqueio com mensagem clara, medidor visível pro tenant.
 2. **Model-picker por skill** (`panel.model: haiku|sonnet|opus` no frontmatter). Operacional/diagnóstico → Haiku/Sonnet; copy pesado → Opus. Ledger por skill×modelo alimenta recalibração de preço/teto.
