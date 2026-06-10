@@ -171,7 +171,11 @@ export interface TenantCtx {
   wsRoot: string;
 }
 
-const als = new AsyncLocalStorage<TenantCtx>();
+// No globalThis pela MESMA razão do __magnusRuns (runs-runtime.ts:54): hot-reload do
+// next dev / bundles duplicados criariam instâncias divergentes e templateRoot() cairia
+// no fallback SILENCIOSAMENTE (= workspace errado). [eng-review D2]
+const g = globalThis as unknown as { __magnusTenantAls?: AsyncLocalStorage<TenantCtx> };
+const als: AsyncLocalStorage<TenantCtx> = g.__magnusTenantAls ?? (g.__magnusTenantAls = new AsyncLocalStorage<TenantCtx>());
 
 export function runWithTenant<T>(ctx: TenantCtx, fn: () => T): T {
   return als.run(ctx, fn);
@@ -596,7 +600,9 @@ const API_ALLOW: RegExp[] = [
 const PUBLIC_PAGES = [/^\/login$/, /^\/auth\//];
 
 function sameOrigin(origin: string | null, site: string): boolean {
-  if (!origin) return true; // GET/SSE e same-origin requests podem vir sem Origin
+  // Mutação SEM Origin é rejeitada (codex C1: browsers modernos SEMPRE mandam Origin
+  // em POST; ausência = cliente não-browser ou muito antigo — não confiar).
+  if (!origin) return false;
   try {
     return new URL(origin).host === new URL(site).host;
   } catch {
@@ -665,12 +671,16 @@ export async function middleware(req: NextRequest) {
       },
     },
   );
-  const { data } = await sb.auth.getUser();
+  // getClaims = verificação de assinatura JWT LOCAL (JWKS cacheado) — sem roundtrip
+  // ao Supabase (Oregon ~180ms) por request. Trade-off aceito [eng-review D3]: claims
+  // valem até expirar (~1h) — revogação instantânea não é necessária na F1a; o
+  // requireTenant() das rotas que AGEM ainda valida o user na fonte.
+  const { data: claims } = await sb.auth.getClaims();
 
   const verdict = guardHosted({
     pathname: req.nextUrl.pathname,
     method: req.method,
-    hasSession: Boolean(data.user),
+    hasSession: Boolean(claims?.claims?.sub),
     origin: req.headers.get("origin"),
     site: process.env.MAGNUS_SITE_URL || "https://magnusos.yuribranco.com.br",
   });
@@ -1044,14 +1054,28 @@ const hosted = process.env.MAGNUS_MODE === "hosted";
 const extraDirs = hosted
   ? []
   : (process.env.MAGNUS_PAINEL_DIRS || process.env.HOME || "").split(":").map((s) => s.trim()).filter(Boolean);
-// Hosted: injeta a chave de PLATAFORMA (billing por token — addendum 15/06).
-// Local: NÃO injeta (assinatura do cliente) — comportamento original preservado.
+// ⚠️ HOSTED = ENV WHITELIST, nunca passthrough [eng-review D1 + codex]: o child do SDK
+// herda process.env se `env` não for passado — e o env do painel tem
+// SUPABASE_SERVICE_ROLE_KEY. Um tenant com Bash daria `echo $SUPABASE_SERVICE_ROLE_KEY`.
+// Whitelist mínima: PATH (binários), HOME=ws (configs do claude ficam NO ws, não em /root),
+// chave de PLATAFORMA (billing por token — addendum 15/06), Gemini (criativos), TMPDIR.
+// Local: comportamento original preservado (assinatura do cliente, sem API key).
+function hostedRunEnv(wsRoot: string, skillEnv?: Record<string, string>): Record<string, string> {
+  const allow: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    HOME: wsRoot,
+    TMPDIR: "/tmp",
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+    ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
+  };
+  return { ...allow, ...(skillEnv ?? {}) };
+}
 const runEnv: Record<string, string> | undefined = hosted
-  ? { ...stringEnv(), ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "", ...(opts.env ?? {}) }
+  ? hostedRunEnv(root, opts.env)
   : opts.env ? { ...stringEnv(), ...opts.env } : undefined;
 ```
 
-E no options do `queryFn`, trocar `...(opts.env ? { env: { ...stringEnv(), ...opts.env } } : {})` por `...(runEnv ? { env: runEnv } : {})`.
+E no options do `queryFn`, trocar `...(opts.env ? { env: { ...stringEnv(), ...opts.env } } : {})` por `...(runEnv ? { env: runEnv } : {})`. **Cap de runaway [codex C1]:** no mesmo options, adicionar `maxTurns: Number(process.env.MAGNUS_MAX_TURNS ?? "30")` quando hosted; e logo após criar o handle, `if (hosted) setTimeout(() => { if (!handle.done) handle.abort.abort(); }, Number(process.env.MAGNUS_RUN_TIMEOUT_MS ?? String(15 * 60_000)))` — o teto mensal não segura um run único descontrolado. O teste do Step 6 ganha asserts: `captured.options?.env?.SUPABASE_SERVICE_ROLE_KEY` é `undefined`, `env.HOME` é o wsRoot, e `maxTurns` é 30.
 
 (d) **Slot da fila + ledger no ciclo de vida.** Envolver o corpo do `void (async () => { ... })()` assim — logo no início do async:
 
@@ -1714,8 +1738,114 @@ Expected: `{"provisioned":true}` (ou `duplicate` se re-rodado).
 
 ---
 
+## Emendas aprovadas no /plan-eng-review + /codex (2026-06-10) — PARTE DO PLANO
+
+> Decisões D1-D6 do gate, todas aprovadas pelo Yuri. Os 3 blocos de código críticos (ALS globalThis, getClaims no middleware, env whitelist + runaway cap no executor) já foram editados in-place nas Tasks 2/5/8. O restante abaixo são deltas obrigatórios por task.
+
+**E1 (D1 — design do não-root + spike sandbox) → vira Task 13b (antes do deploy):**
+- O pm2 do `magnusos-online` passa a rodar **como user `magnus` (não-root)**: `useradd -r -m magnus`, `chown -R magnus:magnus /var/lib/magnusos /var/www/magnusos-online`, ecosystem ganha `user: "magnus"` (pm2 root spawna child com setuid) — protege root/outros apps; cross-tenant dentro do app fica pro sandbox.
+- **Spike (timebox 1h):** sandbox nativo do Claude Code (bubblewrap) no Ubuntu 22.04 — `apt-get install -y bubblewrap` + rodar a skill de teste com sandbox habilitado no SDK confinando ao `/ws`. Funcionou → liga por default no executor hosted (`sandbox: true` nas options ou settings do ws). Não funcionou → documentar o resultado no plano e aceitar (não-root + env whitelist + dirs=[] seguram a F1a); container vira F1b.
+- ws por tenant: `chmod 700` no `ensureWorkspace` (`fs.mkdirSync(dir, { recursive: true, mode: 0o700 })`).
+
+**E2 (C1 — runId gerado no servidor) → Task 9:** `run/start` hosted IGNORA `body.runId` e gera `const runId = crypto.randomUUID()` (import `node:crypto`), responde `{ runId }`; o front (`GlobalSkillRunnerHost` ou quem POSTa) passa a abrir o stream com o runId DA RESPOSTA. Mata colisão/hijack de handle cross-tenant (cliente malicioso registrava o id de outro run). Modo local mantém o contrato atual.
+
+**E3 (D4 — DRY) → nova lib:** `lib/hosted/ids.ts` exporta `export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;` (Tasks 6 e 9 importam). `lib/usage-aggregate.ts` exporta `aggregateUsageRows(rows: Array<{skill:string; model:string; in_tok:number|string; out_tok:number|string; usd:number|string; ref:string|null}>): { totalUSD; byModel; bySkill; entries }` — a função pura extraída do corpo da Task 11 (mesma lógica seenRun/round); a rota usa ela. Teste `lib/usage-aggregate.test.ts`: 2 linhas mesmo ref → 1 run; NaN/string usd → coerção `Number()||0`; rounding 4 casas.
+
+**E4 (D5 — test gaps) →** `lib/hosted/run-owner.ts`: `export function assertRunOwner(handle: { tenantId?: string } | undefined, tenantId: string): boolean { return Boolean(handle && handle.tenantId === tenantId); }` + teste (match/mismatch/handle undefined). Rotas stream/answer/abort usam o helper. Teste do finally do executor: mock do SDK (1 result com usage) + `vi.doMock("./hosted/ledger", ...)` com fake — assert `insertCost` chamado 1× e `finishRun("done")`.
+
+**E5 (C2 — produto hosted) → Task 12:** (a) componentes local-only escondidos quando `process.env.NEXT_PUBLIC_MAGNUS_MODE === "hosted"` (setar no `.env.production` junto com MAGNUS_MODE): `ChatFab`/`ChatDrawer`, `ApiKeyBanner`, botão/页 Settings, `DepsCheck`, banners MCP, botão de update — grep por uso nos 3 page.tsx + layout e condicionar render. (b) `/api/skills` hosted: mapear a resposta removendo `body` (UI só precisa de slug/nome/descrição/form/panel) — o prompt interno é IP do produto.
+
+**E6 (C3 — robustez/ops):**
+- **Boot assert (Task 13):** no `app/api/health/route.ts` (ou módulo de boot), se `MAGNUS_MODE==="hosted"` e (`!process.env.MAGNUS_SKILLS_DIR || !fs.existsSync(process.env.MAGNUS_SKILLS_DIR)`) → `console.error` + health responde `{ ok:false, error:"MAGNUS_SKILLS_DIR ausente" }` com 500 (deploy detecta na hora; lista de skills vazia silenciosa é o pior modo de falha).
+- **Sweep de runs presos (Task 8):** função `sweepStaleRuns()` chamada 1× no primeiro acesso ao runtime hosted: `update runs set status='error', finished_at=now() where status='running' and started_at < now() - interval '30 minutes'` (via service client; pm2 restart no meio de run deixava linha eterna em `running`).
+- **Size cap no syncOut (Task 10):** pular arquivo > 25MB com `console.warn` (`if (fs.statSync(f.abs).size > 25*1024*1024) continue;` + log) — mirror não é para vídeo bruto.
+- **Semântica de delete (Task 10, doc):** o mirror F1a é additive-only — delete local NÃO propaga pro Storage (aceito; hydrate pós-migração pode ressuscitar deletados — documentado no README do repo).
+- **postinstall guard (Task 14):** antes do `npm ci` no VPS, conferir `grep -A2 '"postinstall"' package.json`; se tocar `claude`/locais globais, exportar `MAGNUS_PAINEL_SKIP_CC=1 CI=true` no comando (verificar nome real do guard no package.json do fork).
+- **`import "server-only"` (Task 3):** adicionar `npm i server-only` e `import "server-only";` no topo de `lib/hosted/supabase.ts` — serviceClient importado em client component vira erro de build, não vazamento.
+- **Wording (Task 7):** a nota da Task 7 ganha a frase: "a migration 0002 diz 'reserva atômica é requisito da F1' — formalmente ela entra na F1b; o aceite do gap na F1a foi decisão explícita do eng-review D1/2026-06-10."
+- **Teste novo do route-guard (Task 5):** `mutação sem Origin → 403` (`guardHosted({ pathname:"/api/run/start", method:"POST", hasSession:true, origin:null, site:SITE })` → `{ok:false,status:403}`).
+
+## NOT in scope (considerado e explicitamente deferido)
+
+- **Container sandbox por run (Docker/microVM)** → F1b; com chave de plataforma única + não-root + env whitelist + spike bubblewrap, o threat model F1a (1-2 mentorados) fecha sem ele.
+- **Reserva atômica de orçamento** → F1b; perda máxima = custo de `MAGNUS_MAX_CONCURRENT_RUNS` runs simultâneos do mesmo tenant.
+- **BullMQ/Redis** → F1b; fila in-process basta pra 2 slots.
+- **Propagação de delete no mirror Storage** → F1b (mirror é additive-only).
+- **Revogação instantânea de sessão** → claims locais valem até expirar (~1h); aceitável.
+- **CI/CD via GH Actions** → bloqueado no escopo `workflow` do token gh; deploy manual documentado na Task 14.
+- **Migração de região do Supabase (Oregon→sa-east-1)** → reavaliar com dados de latência reais do teste de 7 dias.
+- **Rotas locais não-core (chat, meta, notion, radar-config, update, apikey, mcp, deps)** → 501 via allowlist; portar sob demanda nas fases F2-F4.
+
+## What already exists (reusado vs reconstruído)
+
+| Existente | Decisão |
+|---|---|
+| `magnus-painel` b5fc883 inteiro (UI, skills, runs, SSE, medidor) | **Reusado** (fork; ALS evita re-assinar 18 arquivos) |
+| Schema F0 (tenants/RLS/cost_ledger/runs/fns) | **Reusado** como está |
+| Webhook + provisioning Hotmart | **Reusado** (Task 15 só dispara) |
+| `MAGNUS_SKILLS_DIR` override em `paths.ts:19-21` | **Reusado** (+ boot assert E6) |
+| `extractUsage` do agent-sdk-map | **Reusado** (ledger consome o mesmo `RunUsage`) |
+| `lib/loopback.ts` guard | **Mantido** pro modo local; hosted usa route-guard novo |
+| `usage-store.ts` JSONL | **Mantido** só pro modo local; hosted lê ledger |
+| Substrato F0 (nginx/TLS/pm2/dns) | **Reusado** (painel entra na mesma porta 3100) |
+
+## Failure modes (por codepath novo)
+
+| Codepath | Falha realista | Teste? | Handling? | User vê? |
+|---|---|---|---|---|
+| budgetGate | RPC falha (rede Oregon) | ✗ | throw → 500 da rota | erro genérico (aceito) |
+| createRun finally ledger | insert falha | ✓ (E4) | catch + console.error | run ok, custo NÃO contado (sub-cobrança best-effort — aceito F1a, log) |
+| syncOut | Storage fora | ✓ (fake) | catch best-effort | invisível; mirror atrasado (aceito) |
+| run loop | pm2 restart no meio | ✗ | sweepStaleRuns (E6) | run vira 'error' em ≤30min |
+| magic link | token expirado | e2e edge | redirect /login?erro= | mensagem clara ✓ |
+| ensureWorkspace | disco cheio | ✗ | throw → 500 | erro genérico; **monitorar disco no /canary** |
+| fila de slots | 3º run espera indefinido se release vazar | ✓ (release duplo) | timeout de run (E1) solta o slot | espera ≤15min pior caso |
+
+**Critical gap residual: nenhum** — os silenciosos (ledger/sync) são best-effort documentados com log, decisão consciente F1a.
+
+## Paralelização (worktrees)
+
+| Lane | Tasks | Módulos | Depende |
+|---|---|---|---|
+| A | 2→3→4→5 (ctx, supabase, auth, guard) | lib/hosted, middleware, app/login | Task 1 |
+| B | 6→7→10 (ws, ledger, storage) | lib/hosted, supabase/migrations | Task 1 |
+| C | 8→9 (executor, rotas run) | lib/runs-runtime, app/api/run | A+B |
+| D | 11→12→13 (usage, rotas, páginas) | app/api, app/*, lib/watcher | A (e C pro usage) |
+| E | 13b→14→15→16 (hardening VPS, deploy, smoke) | infra, VPS | tudo |
+
+Execução: **A ∥ B** em paralelo → C → D → E. Conflito potencial: A e B tocam `lib/hosted/` (arquivos distintos — ok com coordenação).
+
+## Implementation Tasks (síntese do review)
+
+- [ ] **T1 (P1)** — executor — env whitelist + maxTurns + timeout (editado in-place Task 8) — Verify: teste Step 6 com asserts novos
+- [ ] **T2 (P1)** — infra — Task 13b não-root `magnus` + chmod 700 + spike bubblewrap — Verify: `ps -o user= -p <pid do run>` ≠ root
+- [ ] **T3 (P1)** — rotas run — runId server-side (E2) — Verify: POST com runId forjado é ignorado
+- [ ] **T4 (P1)** — boot — assert MAGNUS_SKILLS_DIR (E6) — Verify: health 500 sem a var
+- [ ] **T5 (P2)** — middleware — getClaims local (editado in-place Task 5) — Verify: zero chamadas auth/v1/user em GET de página (network tab)
+- [ ] **T6 (P2)** — DRY — ids.ts + usage-aggregate.ts + testes (E3) — Verify: vitest novos PASS
+- [ ] **T7 (P2)** — testes — run-owner + ledger-finally (E4) — Verify: vitest PASS
+- [ ] **T8 (P2)** — UI hosted — esconder local-only + skills sem body (E5) — Verify: /qa-only sem botão morto
+- [ ] **T9 (P2)** — ops — sweep stale runs + size cap + postinstall guard + server-only (E6) — Verify: testes + deploy
+- [ ] **T10 (P3)** — CSRF estrito (editado in-place Task 5) — Verify: teste novo route-guard
+
 ## Self-review (feito na escrita)
 
 - **Cobertura vs braindump §3:** U1 auth (Tasks 3-5) ✓ · U2 Storage (6, 10) ✓ · U3 executor+ledger (7-9) ✓ · medidor wired (11) ✓ · skills rodando hosted (8, 14 — `MAGNUS_SKILLS_DIR` já suportado) ✓ · fora-de-escopo respeitado (allowlist 501) ✓.
 - **Tipos consistentes:** `TenantCtx{tenantId,wsRoot}` (T2) = consumido em T9/T12; `LedgerDB` (T7) = consumido em T8/T9; `RunUsage` é o existente de `lib/types.ts`; `guardHosted` shape único (T5).
 - **Riscos explicitados:** gate não-atômico (T7 nota), import dinâmico ws-storage antes da T10 (T8 nota), inotify por tenant (T12 nota), build no VPS não no Mac (T14), env plaintext no VPS = dívida (T14).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | (design aprovado em brainstorm 2026-06-10 com o Yuri) |
+| Codex Review | `/codex review` (outside voice) | Independent 2nd opinion | 1 | ABSORBED | 19 pontos: 11 reais foldados (C1/C2/C3), 1 parcial (boot assert), 1 falso (testes existem — codex não via o repo do painel), 6 já decididos no gate |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 6 issues (2 P1 segurança, 3 P2, 1 P3 documentado), 3 test gaps fechados, 0 critical gaps residuais |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | UI reusa o design system do painel; E5 esconde controles local-only |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | n/a (produto, não devtool) |
+
+- **CODEX:** outside voice rodou (gpt-5.5, high reasoning, 77.6k tokens); achados de segurança (runId server-side, runaway cap, Origin estrito, env inheritance) e produto (UI morta, skill body) todos foldados nas emendas E1-E6 com aprovação explícita do Yuri (D6: C1+C2+C3).
+- **CROSS-MODEL:** sem tensão — codex REFORÇOU o hardening do eng-review e adicionou furos novos; nenhuma contradição entre os dois reviewers. Consenso forte na decisão #0 (fatia fina com hardening ok pro threat model F1a; container = F1b).
+- **VERDICT:** ENG CLEARED (com codex absorvido) — pronto pra implementar. Decisões D1-D6 todas resolvidas pelo Yuri em 2026-06-10.
+
+NO UNRESOLVED DECISIONS
