@@ -1349,7 +1349,9 @@ export interface StorageOps {
   upload(remote: string, data: Uint8Array): Promise<void>;
 }
 
-const SKIP_DIRS = new Set([".magnus-painel", "node_modules", ".git", ".next"]);
+// ⚠️ .claude OBRIGATÓRIO na denylist [quality review G5 — CRITICAL]: com HOME=wsRoot o SDK
+// escreve .claude/ no ws do tenant; espelhar = vazar credencial/estado pro Storage.
+const SKIP_DIRS = new Set([".claude", ".magnus-painel", "node_modules", ".git", ".next"]);
 
 function* walk(dir: string, base: string): Generator<{ abs: string; rel: string }> {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
