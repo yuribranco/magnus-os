@@ -120,7 +120,20 @@ Teste de **8 semanas** com os 6 projetos do Leo:
 
 Bandits/ML estatístico (log nasce pronto, técnica entra depois) · escrita white-label pra mentorados (App Review, F2) · outras plataformas (Google/TikTok) · relatórios pro cliente final (backlog P1 da spec mãe) · chat conversacional (estética da spec mãe: depois).
 
-## 14. Fontes-chave da research
+## 14. Roadmap ML — graduação por volume de dados (adendo 2026-06-11)
+
+> Pedido do Yuri: "trazer o que há de melhor em ML pro processo". Análise feita (TensorFlow avaliado e descartado — ver memo da sessão /ceo 2026-06-11): pro NOSSO problema (tabular, pequeno, decisões discretas), o estado da arte NÃO é deep learning. Cada milestone abaixo destrava com volume de dado, tem ferramenta certa e critério de aceite. O log de casos ML-ready (§3) é a ponte — nada disso exige retrabalho.
+
+| Milestone | Gatilho (dado acumulado) | Técnica + ferramenta | O que destrava | Critério de aceite |
+|---|---|---|---|---|
+| **M0 — agora** | — | LLM + casos (plano atual) | Shadow mode, concordância | Plano v1 |
+| **M1 — outcome predictor** | ~150-300 casos com outcome rotulado | **GBDT (LightGBM/XGBoost)** sobre features tabulares do snapshot (não rede neural: Grinsztajn et al. 2022 — árvores > DL em tabular <10k linhas) | Score de risco anexado a cada recomendação ("casos parecidos deram falha 60%") | Acurácia de outcome > baseline LLM-only em backtest no próprio log |
+| **M2 — bandit de budget** | Feedback diário por entidade maduro (~3+ meses de snapshots) | **Thompson Sampling paramétrico** (Gigli & Stella 2024; numpy/scipy, sem framework DL) | Alocação contínua de budget entre adsets dentro de guardrails | Simulação replay no histórico ganha do Leo-baseline antes de tocar dinheiro real |
+| **M3 — inteligência de criativo** | Biblioteca de criativos × outcomes (~centenas) | **Embeddings visuais pretrained** (CLIP/Gemini vision via API — usar modelo pronto, NÃO treinar) | "Criativos com cara X fadigam mais rápido no nicho Y" | Correlação embedding→outcome estatisticamente melhor que dHash atual do Radar |
+
+**Decisão de framework:** se algum milestone futuro exigir treinar rede neural de verdade (improvável antes de escala multi-tenant), a escolha é **PyTorch ou JAX** — TensorFlow está em modo manutenção (Google migrou frontier pra JAX; pesquisa ~85% PyTorch). Registrado pra ninguém re-litigar.
+
+## 15. Fontes-chave da research
 
 - CBR para agentes LLM (schema do caso): arXiv:2504.06943 · arXiv:2506.20531
 - LLM congelado + memória externa: ExpeL arXiv:2308.10144 (AAAI-24) · Memento arXiv:2508.16153 · MACLA arXiv:2512.18950 (AAMAS-26)
