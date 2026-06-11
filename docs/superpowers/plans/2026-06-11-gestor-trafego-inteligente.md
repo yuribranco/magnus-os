@@ -39,8 +39,14 @@
 8. **Feature flag:** `tenants.plan.features.traffic_copilot === true`. Helper `hasFeature()`. Sem tabela nova.
 9. **Gateway Meta:** interface `MetaGateway`; implementação default `MarketingApiGateway` (token dev-mode, env `META_TRAFFIC_TOKEN`); env `META_GATEWAY=marketing_api` (única opção implementada; spike da Task 1 decide se um adaptador MCP entra DEPOIS — não bloqueia nada).
 10. **RLS:** SELECT self-read via subquery `tenants.auth_user_id = auth.uid()` (padrão cost_ledger); INSERT/UPDATE/DELETE só service_role (rotas usam `serviceClient()` após `requireTenant()`).
-11. **Recomendações:** máx. 5/projeto/dia; expiram em 48h (`status: 'expirada'` no job seguinte).
+11. **Recomendações:** máx. 5/projeto/dia; expiram em 48h (`status: 'expirada'` no job seguinte); **dedup por unique parcial** `(tenant_id, project_id, date, class, entity_level, entity_id)` — re-rodar o job no mesmo dia faz upsert, não duplica.
 12. **Commits:** conventional commits, no repo `magnus-os-online`. Push após cada task (regra do Yuri: push é parte do done).
+13. **`requireTenant()` LANÇA `TenantError`** — não responde 401/403 sozinho. TODA rota usa o padrão real do repo (ver `app/api/usage/route.ts`): try/catch com `tenantErrorResponse(e)`. E TODA rota declara `export const runtime = "nodejs"; export const dynamic = "force-dynamic";`.
+14. **Tenant-scoping em TODO método do TrafficDb** — `serviceClient()` ignora RLS, então TODO read/write recebe `tenantId` e filtra `.eq("tenant_id", tenantId)`. Rota valida que `project_id` pertence ao tenant ANTES de qualquer ação.
+15. **Escrita Meta só em entidade conhecida:** o `apply` exige que `(project_id, entity_level, entity_id)` exista em `traffic_snapshots` dos últimos 7 dias. Entidade fora do snapshot = 422. Isso impede usar o token compartilhado pra mexer em entidade de outra conta.
+16. **Guardrails enforced no apply (server-side):** budget_up/down busca o budget atual na Graph (`gateway.getDailyBudget`), calcula o delta % e rejeita acima de `max_budget_change_pct`; rejeita fora de `hora_inicio..hora_fim` (BRT); valida cents inteiro positivo; idempotência por `Idempotency-Key` (header opcional — repete a mesma key em 10min = 409).
+17. **`budgetGate()` antes de TODA chamada paga** (diagnóstico, indução, embeddings em lote): `budgetGate(realLedgerDB(), tenant.id)` — estourou o teto do plano → pula com log, não chama API.
+18. **Job NÃO importa `lib/hosted/supabase.ts`** (tem `import "server-only"` — morre fora do Next). O job usa `lib/traffic/service-client.ts` (client supabase próprio criado de env, sem server-only). `tsx` entra como devDependency explícita do painel.
 
 ---
 
@@ -256,13 +262,26 @@ create table if not exists public.traffic_autonomy (
   unique (tenant_id, project_id, class)
 );
 
--- RLS: SELECT self-read (padrão cost_ledger), writes só service_role.
+-- FKs cruzadas (criadas depois das duas tabelas existirem) + dedup de recs diárias
+alter table public.traffic_cases drop constraint if exists traffic_cases_rec_fk;
+alter table public.traffic_cases
+  add constraint traffic_cases_rec_fk foreign key (recommendation_id)
+  references public.traffic_recommendations(id) on delete set null;
+alter table public.traffic_recommendations drop constraint if exists traffic_recs_case_fk;
+alter table public.traffic_recommendations
+  add constraint traffic_recs_case_fk foreign key (matched_case_id)
+  references public.traffic_cases(id) on delete set null;
+create unique index if not exists uniq_traffic_recs_daily
+  on public.traffic_recommendations (tenant_id, project_id, date, class, entity_level, entity_id);
+
+-- RLS: SELECT self-read (padrão cost_ledger), writes só service_role. Idempotente (drop antes).
 do $$
 declare t text;
 begin
   foreach t in array array['traffic_projects','traffic_snapshots','traffic_cases',
                            'traffic_recommendations','traffic_playbooks','traffic_autonomy'] loop
     execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists %I_self_read on public.%I', t, t);
     execute format($p$
       create policy %I_self_read on public.%I for select
       using (tenant_id in (select id from public.tenants where auth_user_id = auth.uid()))
@@ -508,6 +527,7 @@ export interface RawInsightRow {
 
 export interface MetaGateway {
   getDailyInsights(account: string, level: "campaign" | "adset" | "ad", since: string, until: string): Promise<RawInsightRow[]>;
+  getDailyBudget(entityId: string): Promise<number | null>; // cents; null se a entidade usa lifetime/CBO herdado
   setStatus(entityId: string, status: "PAUSED" | "ACTIVE"): Promise<void>;
   updateDailyBudget(entityId: string, dailyBudgetCents: number): Promise<void>;
   updateBid(adsetId: string, bidAmountCents: number): Promise<void>;
@@ -570,6 +590,15 @@ export class MarketingApiGateway implements MetaGateway {
   async duplicate(entityId: string): Promise<string> {
     const r = (await this.post(`${entityId}/copies`, { status_option: "PAUSED" })) as { copied_ad_id?: string; copied_adset_id?: string; copied_campaign_id?: string; id?: string };
     return r.copied_ad_id ?? r.copied_adset_id ?? r.copied_campaign_id ?? r.id ?? "";
+  }
+
+  async getDailyBudget(entityId: string): Promise<number | null> {
+    const u = new URL(`${BASE}/${entityId}`);
+    u.searchParams.set("access_token", this.token);
+    u.searchParams.set("fields", "daily_budget");
+    const body = (await this.get(u.toString())) as unknown as { daily_budget?: string };
+    const v = parseInt(String(body.daily_budget ?? ""), 10);
+    return Number.isFinite(v) && v > 0 ? v : null;
   }
 }
 
@@ -920,7 +949,27 @@ describe("TrafficDb", () => {
 });
 ```
 
-- [ ] **Step 2: Implementar `db.ts`** — métodos (todos tenant-scoped, todos com throw-on-error): `listProjects(tenantId)`, `insertProject`, `upsertSnapshots(rows[])` (upsert na unique), `getSeries(projectId, level, entityId, sinceDate)`, `insertCase`, `updateCaseOutcome(caseId, outcome, magnitude, detail)`, `casesDue(today)` (outcome pendente + `outcome_due <= today`), `insertRecommendations(rows[])`, `openRecs(projectId)`, `decideRec(recId, status, matchedCaseId?)`, `expireOldRecs(beforeDate)`, `listCases(filters)`, `listPlaybooks`, `upsertPlaybook`, `setPlaybookStatus`, `getAutonomy(projectId)`, `upsertAutonomy(projectId, class, fields)`, `similarCases(tenantId, embedding, class, limit)` via RPC:
+- [ ] **Step 2: Implementar `db.ts`** — TODOS os métodos recebem `tenantId` como 1º arg e filtram `.eq("tenant_id", tenantId)` (serviceClient ignora RLS — decisão travada #14); todos com throw-on-error. **Assinaturas exatas (não desviar — Tasks 9-13 importam estas):**
+  - `listProjects(tenantId: string): Promise<TrafficProject[]>`
+  - `getProject(tenantId: string, projectId: string): Promise<TrafficProject | null>` (rotas validam ownership com isto)
+  - `insertProject(tenantId: string, p: Omit<TrafficProject, "id" | "tenant_id">): Promise<{ id: string }>`
+  - `upsertSnapshots(tenantId: string, rows: Array<SnapshotRow & { project_id: string }>): Promise<void>` (upsert `onConflict: "tenant_id,project_id,date,level,entity_id"`)
+  - `getSeries(tenantId: string, projectId: string, level: EntityLevel, entityId: string, sinceDate: string): Promise<SnapshotRow[]>` (order date asc)
+  - `entityInRecentSnapshots(tenantId: string, projectId: string, level: EntityLevel, entityId: string, sinceDate: string): Promise<boolean>` (gate de escrita — decisão #15)
+  - `insertCase(tenantId: string, row: Record<string, unknown>): Promise<{ id: string }>`
+  - `updateCaseOutcome(tenantId: string, caseId: string, outcome: string, magnitude: number | null, detail: unknown): Promise<void>`
+  - `casesDue(tenantId: string, projectId: string, today: string): Promise<TrafficCase[]>` (`outcome=eq.pendente` + `outcome_due<=today`)
+  - `upsertRecommendations(tenantId: string, rows: Array<Record<string, unknown>>): Promise<void>` (upsert `onConflict: "tenant_id,project_id,date,class,entity_level,entity_id"` — job re-rodado não duplica)
+  - `openRecs(tenantId: string, projectId: string): Promise<TrafficRecommendation[]>`
+  - `decideRec(tenantId: string, recId: string, status: string, matchedCaseId?: string): Promise<void>`
+  - `expireOldRecs(tenantId: string, beforeDate: string): Promise<void>`
+  - `listCases(tenantId: string, filters: { projectId?: string; class?: string; limit?: number }): Promise<TrafficCase[]>`
+  - `listPlaybooks(tenantId: string, status?: string): Promise<Array<Record<string, unknown>>>`
+  - `upsertPlaybook(tenantId: string, row: Record<string, unknown>): Promise<{ id: string }>`
+  - `setPlaybookStatus(tenantId: string, id: string, fields: { status?: string; regra?: string; titulo?: string; criado_por?: string }): Promise<void>`
+  - `getAutonomy(tenantId: string, projectId: string): Promise<Array<Record<string, unknown>>>`
+  - `upsertAutonomy(tenantId: string, projectId: string, klass: string, fields: Record<string, unknown>): Promise<void>` (onConflict `tenant_id,project_id,class`)
+  - `similarCases(tenantId: string, embedding: number[], klass: string, limit: number)` via RPC:
 
 ```typescript
 // Trecho-chave (o resto segue o mesmo padrão; throw-on-error SEMPRE):
@@ -955,14 +1004,16 @@ create or replace function public.match_traffic_cases(
   p_tenant uuid, p_embedding vector(768), p_class text, p_limit int default 5
 ) returns table (id uuid, project_id uuid, class text, reason text, situation_caption text,
                  outcome text, params jsonb, similarity float)
-language sql stable security definer set search_path = public as $$
+language sql stable security definer set search_path = '' as $$
+  -- search_path vazio (anti search-path attack, padrão da migration 0003) exige
+  -- qualificar o OPERADOR do pgvector: operator(public.<=>) — senão quebra em runtime.
   select c.id, c.project_id, c.class, c.reason, c.situation_caption, c.outcome, c.params,
-         1 - (c.situation_embedding <=> p_embedding) as similarity
-  from traffic_cases c
+         1 - (c.situation_embedding operator(public.<=>) p_embedding) as similarity
+  from public.traffic_cases c
   where c.tenant_id = p_tenant
     and c.situation_embedding is not null
     and (p_class is null or c.class = p_class)
-  order by c.situation_embedding <=> p_embedding
+  order by c.situation_embedding operator(public.<=>) p_embedding
   limit p_limit;
 $$;
 revoke all on function public.match_traffic_cases(uuid, vector, text, int) from public, anon, authenticated;
@@ -1158,10 +1209,17 @@ export async function callDiagnosisModel(prompt: string, apiKey = process.env.AN
 }
 ```
 
-- [ ] **Step 3: `runDailyDiagnosis(db, ledger, tenant, project)`** (no mesmo arquivo): monta `summary` dos snapshots 30d (agregado por campanha + top 10 ads por spend 7d, formato texto compacto), busca `similarCases` (embedding do summary via `embedText` + RPC, top 5), `listPlaybooks(status='aprovado')`, chama `callDiagnosisModel`, `parseDiagnosisResponse`, `insertRecommendations` com `date=today`, e grava custo: `ledger.insertCost({ tenant_id, service: "traffic", ref: project.id, skill: "gestor-trafego", model, in_tok, out_tok, usd: inTok*3/1e6 + outTok*15/1e6 })` (preço Sonnet $3/$15 por Mtok — conferir `lib/hosted/ledger.ts` se já existe helper de pricing e usar o existente se houver).
+- [ ] **Step 3: `runDailyDiagnosis(db: TrafficDb, ledger: LedgerDB, tenant: Tenant, project: TrafficProject)`** (no mesmo arquivo) — **`ledger` é `LedgerDB` (de `lib/hosted/ledger.ts`), NUNCA um SupabaseClient cru** (o chamador passa `realLedgerDB()` — conferir o factory real em `lib/hosted/real-ledger.ts` e usar o MESMO que `app/api/run/start` usa). Fluxo:
+  1. **`budgetGate(ledger, tenant.id)` ANTES de qualquer chamada paga (decisão #17)** — estourou o teto → `console.log("[diag] skip: budget")` e return, sem chamar Anthropic/Gemini;
+  2. monta `summary` dos snapshots 30d (agregado por campanha + top 10 ads por spend 7d, texto compacto);
+  3. `embedText(summary)` + `similarCases` (top 5) + `listPlaybooks(tenant.id, 'aprovado')`;
+  4. `callDiagnosisModel` → `parseDiagnosisResponse` → `upsertRecommendations` com `date=today` (upsert — re-rodar o job não duplica);
+  5. grava custo: `ledger.insertCost({ tenant_id, service: "traffic", ref: project.id, skill: "gestor-trafego", model, in_tok, out_tok, usd: inTok*3/1e6 + outTok*15/1e6 })` (Sonnet $3/$15 por Mtok — se `lib/hosted/ledger.ts` já tiver helper de pricing, usar o existente; conferir a assinatura REAL de `insertCost` em `real-ledger.ts` antes).
 - [ ] **Step 4: Rodar, passar, commit** — `npx vitest run lib/traffic/diagnose.test.ts && npm run typecheck && git add -A && git commit -m "feat(traffic): diagnóstico shadow mode — prompt com casos+playbooks, parse defensivo, custo no ledger" && git push`
 
-## Task 11: Indução de playbooks (contrastiva)
+## Task 11: Indução de playbooks (contrastiva) — ⏸️ DIFERÍVEL
+
+> **Codex P3 acatado parcialmente:** o código é barato de escrever agora (mantém o plano coeso e a spec promete), mas a indução **só dispara com ≥3 sucessos E ≥3 falhas numa classe — semanas de dados reais**. Se o cronograma apertar, PULAR esta task inteira e executá-la na semana 2+ do teste não quebra nada (o job da Task 13 chama `runWeeklyInduction` só às segundas e tolera o módulo ausente com try/catch — nesse caso comentar o import + chamada e deixar TODO).
 
 **Files:** Create: `painel/lib/traffic/induction.ts` + `.test.ts`
 
@@ -1203,45 +1261,74 @@ describe("buildInductionPrompt", () => {
 
 **Files:** Create (todas em `painel/app/api/traffic/`): `projects/route.ts`, `today/route.ts`, `apply/route.ts`, `decide/route.ts`, `manual-case/route.ts`, `cases/route.ts`, `playbooks/route.ts`, `playbooks/[id]/route.ts`, `autonomy/route.ts` · Modify: `painel/lib/hosted/route-guard.ts` (allowlist F1a — ADICIONAR os paths novos; ler o arquivo antes)
 
-Padrão de TODAS as rotas (copiar de uma rota existente tipo `app/api/usage/route.ts` — ler antes):
+Padrão de TODAS as rotas — **copiar EXATAMENTE o tratamento de erro de `app/api/usage/route.ts`** (`requireTenant()` LANÇA `TenantError`; quem responde 401/403 é `tenantErrorResponse` — decisão travada #13):
 
 ```typescript
 import { NextResponse } from "next/server";
 import { requireTenant } from "@/lib/hosted/require-tenant";
+import { tenantErrorResponse } from "@/lib/hosted/tenant"; // ⚠️ conferir o import real em app/api/usage/route.ts e usar o MESMO
 import { hasFeature } from "@/lib/hosted/features";
 import { serviceClient } from "@/lib/hosted/supabase";
 import { TrafficDb } from "@/lib/traffic/db";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET() {
-  const tenant = await requireTenant();           // 401/403 automáticos via TenantError
-  if (!hasFeature(tenant, "traffic_copilot")) return NextResponse.json({ error: "feature off" }, { status: 404 });
-  const db = new TrafficDb(serviceClient());
-  const projects = await db.listProjects(tenant.id);
-  return NextResponse.json({ projects });
+  try {
+    const tenant = await requireTenant();
+    if (!hasFeature(tenant, "traffic_copilot")) return NextResponse.json({ error: "feature off" }, { status: 404 });
+    const db = new TrafficDb(serviceClient());
+    const projects = await db.listProjects(tenant.id);
+    return NextResponse.json({ projects });
+  } catch (e) {
+    const r = tenantErrorResponse(e);
+    if (r) return r;
+    console.error("[traffic]", e);
+    return NextResponse.json({ error: "erro interno" }, { status: 500 });
+  }
 }
 ```
 
-> ⚠️ Conferir como as rotas existentes tratam `TenantError` (se há um wrapper `withTenantCtx`/`tenantErrorResponse` — usar o MESMO padrão, não inventar try/catch novo).
+> Validação de input em TODA rota que escreve: `entity_level` no enum, `class` na taxonomia, `project_id` UUID (usar `UUID_RE` de `lib/hosted/ids.ts`), e **ownership**: `db.getProject(tenant.id, project_id)` → null = 404. Rejeitar campos desconhecidos em rotas de dinheiro (`apply`).
 
 - [ ] **Step 1:** `GET/POST /api/traffic/projects` — listar / criar projeto (POST body: nome, nicho, vertical?, ticket?, ad_account_id, breakeven_roas).
 - [ ] **Step 2:** `GET /api/traffic/today?project=<id>` — devolve `{ recommendations: openRecs(project), lastSync, summary }` (summary = agregado 7d por campanha dos snapshots, pra UI).
-- [ ] **Step 3:** `POST /api/traffic/apply` — **a rota mais importante.** Body: `{ project_id, class, entity_level, entity_id, entity_name, params, reason, recommendation_id? }`. Fluxo:
-  1. valida `reason.length >= 10` (400 se não) e classe na taxonomia;
-  2. se `isWriteClass(class)`: executa via `trafficGateway()` — `budget_up/down`→`updateDailyBudget` (params.to_cents) · `pause_*`→`setStatus(PAUSED)` · `duplicate_winner`→`duplicate` · `bid_change`→`updateBid`. **Guardrail:** se autonomy do par classe×projeto tem `kill_switch: true` → 403;
-  3. monta caso: série 30d das entidades (via `getSeries`), `buildCaption`, `embedText(caption)`, `outcome_due = hoje + outcomeWindowDays(class)`;
-  4. concordância: `matchCaseToRecs(case, openRecs)` → se full/partial: `decideRec(recId, 'acatada'|'modificada', caseId)` e `origem = recomendacao_acatada|recomendacao_modificada`; senão `origem='leo'`;
-  5. `insertCase` e devolve `{ case_id, match }`.
-  Se a escrita Meta falhar → 502 com a mensagem da Graph, SEM gravar caso (atomicidade: caso só existe se a ação aconteceu).
+- [ ] **Step 3:** `POST /api/traffic/apply` — **a rota mais importante (escreve em campanha REAL com dinheiro REAL — todos os gates abaixo são obrigatórios, na ordem).** Body: `{ project_id, class, entity_level, entity_id, entity_name, params, reason, recommendation_id? }` (campo desconhecido = 400). Fluxo:
+  1. **Validação:** `reason.length >= 10` · classe na taxonomia · `entity_level` no enum · `project_id` UUID + ownership (`getProject(tenant.id, project_id)` → null = 404);
+  2. **Gate de entidade conhecida (decisão #15):** `entityInRecentSnapshots(tenant.id, project_id, entity_level, entity_id, hoje-7d)` → false = 422 "entidade não encontrada nos snapshots do projeto". Impede mexer em entidade de outra conta via token compartilhado;
+  3. **Guardrails (decisão #16), só pra `isWriteClass`:** ler `getAutonomy` do par classe×projeto (default se não existe) → `kill_switch: true` = 403 · hora local BRT fora de `hora_inicio..hora_fim` = 403 com mensagem · pra budget_up/down: `params.to_cents` inteiro > 0 obrigatório, `current = gateway.getDailyBudget(entity_id)` e se `current` não-null, `abs(to_cents-current)/current*100 > max_budget_change_pct` = 422 com o delta calculado · idempotência: header `Idempotency-Key` repetido em 10min (Map em memória `globalThis.__trafficIdem`) = 409;
+  4. **Escrita Meta:** `budget_up/down`→`updateDailyBudget(entity_id, params.to_cents)` · `pause_*`→`setStatus(entity_id, "PAUSED")` · `duplicate_winner`→`duplicate` · `bid_change`→`updateBid`. Falhou → 502 com a mensagem da Graph, NADA é gravado (caso só existe se a ação aconteceu);
+  5. **Monta e grava o caso PRIMEIRO:** série 30d (`getSeries`), `buildCaption`, `embedText(caption)` (falhou embedding → grava caso com `situation_embedding: null`, não bloqueia), `outcome_due = hoje + outcomeWindowDays(class)`, `origem` provisória `'leo'` → `caseId = insertCase(...)`;
+  6. **Concordância DEPOIS do caso existir:** `matchCaseToRecs(case, openRecs)` → full/partial: `decideRec(tenant.id, recId, 'acatada'|'modificada', caseId)` + UPDATE do caso (`origem`, `recommendation_id`); devolve `{ case_id, match }`.
 - [ ] **Step 4:** `POST /api/traffic/decide` — body `{ recommendation_id, decision: "recusar" }` (recusa explícita sem ação; acatar/modificar acontecem via `apply`). Marca `status='recusada'`.
 - [ ] **Step 5:** `POST /api/traffic/manual-case` — classes manuais (`new_creative`, `new_audience`, `lp_change`, `other_manual`): mesmo fluxo do apply SEM passo 2 (sem escrita Meta), `entity_level: 'external'` permitido.
 - [ ] **Step 6:** `GET /api/traffic/cases?project=&class=` · `GET/POST /api/traffic/playbooks` + `PATCH /api/traffic/playbooks/[id]` (aprovar/editar/desativar: body `{ status?, regra?, titulo? }`, marca `criado_por:'leo'` quando editado) · `GET/PATCH /api/traffic/autonomy` (PATCH body `{ project_id, class, modo?, guardrails? }` — Leo rebaixa/ajusta).
-- [ ] **Step 7:** Adicionar TODOS os paths `/api/traffic/*` na allowlist do `route-guard.ts` (seguir o formato existente do arquivo).
+- [ ] **Step 7:** Adicionar TODOS os paths `/api/traffic/*` na allowlist do `route-guard.ts` (seguir o formato existente do arquivo) **+ estender `route-guard.test.ts`** (os testes existentes asseram 501 pra rota fora da allowlist — adicionar casos: `/api/traffic/today` GET permitido, `/api/traffic/apply` POST exige same-origin, rota traffic inexistente continua 501).
 - [ ] **Step 8: Teste de rota mínimo** — `painel/app/api/traffic/apply/apply-helpers.test.ts`: extrair a lógica do passo 3-4 do apply pra função pura `assembleCase(input, series, openRecs)` em `lib/traffic/assemble-case.ts` e testar: reason curto rejeita, write class exige params, match seta origem certa. (Rotas em si ficam finas; lógica testável vive em lib.)
 - [ ] **Step 9: Rodar tudo + typecheck + commit** — `npx vitest run lib/traffic && npm run typecheck && git add -A && git commit -m "feat(traffic): rotas /api/traffic/* (apply atômico, decide, manual, playbooks, autonomy) + allowlist" && git push`
 
 ## Task 13: Job diário (pm2 cron)
 
-**Files:** Create: `painel/scripts/traffic-daily.mjs` · Modify: `ecosystem.config.cjs`
+**Files:** Create: `painel/scripts/traffic-daily.mjs`, `painel/lib/traffic/service-client.ts` · Modify: `ecosystem.config.cjs`, `painel/package.json`
+
+- [ ] **Step 0a: Dependência `tsx`** — `cd painel && npm install -D tsx` (decisão #18: dependência explícita, nunca `npx` baixando em produção). Verificar que entrou no package.json.
+- [ ] **Step 0b: Client supabase script-safe** — `painel/lib/traffic/service-client.ts`. ⚠️ O job NÃO PODE importar `lib/hosted/supabase.ts` (tem `import "server-only"` que LANÇA fora do Next — decisão #18):
+
+```typescript
+// Client service-role pra scripts fora do Next (jobs cron). NUNCA importar em rota/componente —
+// pra código Next, use lib/hosted/supabase.ts. Este existe porque server-only mata scripts tsx.
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+export function scriptServiceClient(): SupabaseClient {
+  const url = process.env.MAGNUS_ONLINE_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.MAGNUS_ONLINE_SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase URL/service key ausentes no env do job");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+```
+
+> ⚠️ Conferir os NOMES REAIS das env vars no `.env.op` do magnus-os-online (`grep -i supabase .env.op`) e usar exatamente os que existem — os fallbacks acima cobrem os dois shapes comuns do repo. O mesmo vale pro `realLedgerDB`: se o factory de `lib/hosted/real-ledger.ts` importar `lib/hosted/supabase.ts`, instanciar a classe do ledger diretamente com `scriptServiceClient()` no job.
 
 - [ ] **Step 1: Script** `painel/scripts/traffic-daily.mjs` — roda via `npx tsx` pra importar os módulos TS:
 
@@ -1250,14 +1337,16 @@ export async function GET() {
 // Job diário do traffic_copilot: sync → outcomes → expirar recs → diagnóstico → (segunda: indução).
 // Roda como processo pm2 com cron_restart (autorestart false). Logs no stdout (pm2 logs traffic-jobs).
 import { spawnSync } from "node:child_process";
-const r = spawnSync("npx", ["tsx", "scripts/traffic-daily-main.ts"], { stdio: "inherit", cwd: new URL("..", import.meta.url).pathname });
+// tsx é devDependency local (Step 0a) — usar o binário do node_modules, nunca npx (que baixaria em prod)
+const cwd = new URL("..", import.meta.url).pathname;
+const r = spawnSync(`${cwd}/node_modules/.bin/tsx`, ["scripts/traffic-daily-main.ts"], { stdio: "inherit", cwd });
 process.exit(r.status ?? 1);
 ```
 
 - [ ] **Step 2: Main** `painel/scripts/traffic-daily-main.ts`:
 
 ```typescript
-import { serviceClient } from "../lib/hosted/supabase";
+import { scriptServiceClient } from "../lib/traffic/service-client"; // NUNCA lib/hosted/supabase (server-only)
 import { TrafficDb } from "../lib/traffic/db";
 import { trafficGateway } from "../lib/traffic/meta-gateway";
 import { syncProject } from "../lib/traffic/sync";
@@ -1265,18 +1354,20 @@ import { evaluateOutcome } from "../lib/traffic/outcome";
 import { outcomeWindowDays } from "../lib/traffic/taxonomy";
 import { runDailyDiagnosis } from "../lib/traffic/diagnose";
 import { runWeeklyInduction } from "../lib/traffic/induction";
+// LedgerDB: conferir lib/hosted/real-ledger.ts — se o factory importar lib/hosted/supabase,
+// instanciar a implementação diretamente passando scriptServiceClient() (decisão #18).
 
 function isoDate(d: Date): string { return d.toISOString().slice(0, 10); }
 
 async function main() {
-  const client = serviceClient();
+  const client = scriptServiceClient();
   const db = new TrafficDb(client);
+  const ledger = makeLedger(client); // helper local: instancia o LedgerDB real com este client
   const gw = trafficGateway();
   const today = new Date();
   const until = isoDate(today);
   const since = isoDate(new Date(today.getTime() - 30 * 86400_000));
 
-  // tenants com a flag ligada
   const { data: tenants, error } = await client.from("tenants").select("*").eq("status", "active");
   if (error) throw new Error(error.message);
   for (const tenant of tenants ?? []) {
@@ -1287,27 +1378,27 @@ async function main() {
       try {
         const n = await syncProject(db, gw, p, since, until);
         console.log(`[sync] ${p.nome}: ${n} rows`);
-        // outcomes vencidos
-        const due = await db.casesDue(until);
-        for (const c of due.filter((c) => c.project_id === p.id)) {
-          const series = await db.getSeries(p.id, c.entity_level, c.entity_id, isoDate(new Date(new Date(c.applied_at).getTime() - 14 * 86400_000)));
+        // outcomes vencidos — escopado por tenant+projeto (assinatura da Task 8)
+        const due = await db.casesDue(tenant.id, p.id, until);
+        for (const c of due) {
+          const series = await db.getSeries(tenant.id, p.id, c.entity_level, c.entity_id, isoDate(new Date(new Date(c.applied_at).getTime() - 14 * 86400_000)));
           const applied = c.applied_at.slice(0, 10);
           const pre = series.filter((s) => s.date < applied);
           const post = series.filter((s) => s.date >= applied).slice(0, outcomeWindowDays(c.class));
           const metric = post.some((s) => s.metrics.revenue > 0) ? "roas" as const : "cpa" as const;
           const r = evaluateOutcome({ preSeries: pre.map((s) => s.metrics[metric]), postSeries: post.map((s) => s.metrics[metric]), metric });
-          await db.updateCaseOutcome(c.id, r.label, r.ratio, r.detail);
+          await db.updateCaseOutcome(tenant.id, c.id, r.label, r.ratio, r.detail);
           console.log(`[outcome] case ${c.id}: ${r.label}`);
         }
-        await db.expireOldRecs(isoDate(new Date(today.getTime() - 2 * 86400_000)));
-        await runDailyDiagnosis(db, client, tenant, p);
+        await db.expireOldRecs(tenant.id, isoDate(new Date(today.getTime() - 2 * 86400_000)));
+        await runDailyDiagnosis(db, ledger, tenant, p); // budgetGate dentro (decisão #17)
         console.log(`[diag] ${p.nome}: ok`);
       } catch (e) {
         console.error(`[ERRO] projeto ${p.nome}:`, e); // não derruba os outros projetos
       }
     }
     if (today.getUTCDay() === 1) {
-      try { await runWeeklyInduction(db, client, tenant); } catch (e) { console.error("[inducao]", e); }
+      try { await runWeeklyInduction(db, ledger, tenant); } catch (e) { console.error("[inducao]", e); }
     }
   }
 }
@@ -1338,14 +1429,14 @@ main().then(() => process.exit(0), (e) => { console.error(e); process.exit(1); }
 
 Regras: usar SÓ classes CSS existentes (`.card`, `.pill`, `.btn`, `.tabbar`, `.modal-scrim/.modal`, `.preset-card`, `.field`, tokens). Texto 100% PT. Padrão de fetch: igual aos componentes existentes (olhar `ResultadosTab.tsx` antes).
 
-- [ ] **Step 1: Page** — `app/trafego/page.tsx` (server component): `requireTenant()` + `hasFeature` → 404 se off; carrega projects server-side e renderiza `<TrafficShell projects={...} />` (client).
+- [ ] **Step 1: Page** — `app/trafego/page.tsx` (server component): `requireTenant()` + `hasFeature` → `notFound()` se off; **composição IGUAL a `app/page.tsx`** (ler antes): mesmo wrapper `AppShell` + `Sidebar` + `TopBar` que as páginas existentes usam — NÃO renderizar `TrafficShell` pelado. Carrega projects server-side e passa pro `<TrafficShell projects={...} />` (client) dentro do main.
 - [ ] **Step 2: TrafficShell** — seletor de projeto (select `.select`) + `.tabbar` com 4 abas (estado zustand local ou useState simples — useState basta) → renderiza a aba ativa.
 - [ ] **Step 3: HojeTab** — fetch `/api/traffic/today?project=`; lista de `RecommendationCard` (cada um: `.card` com pill da classe, entity_name, rationale, evidence.numbers como `.pill--mono`, botões **Aplicar** (abre ApplyModal pré-preenchido) / **Recusar** (POST decide) ). Abaixo, botão "Registrar otimização manual" (abre ApplyModal vazio em modo manual). Empty state `.empty` quando sem recomendações.
 - [ ] **Step 4: ApplyModal** — `.modal-scrim/.modal` centralizado (padrão `SkillLaunchModal`): campos classe (select com as 11), entidade (autocomplete simples dos snapshots — input + datalist), params (magnitude % pra budget; oculto pra pause), **Razão (textarea obrigatório ≥10 chars, com hint "por que você está fazendo isso? — é o que a ferramenta aprende")**. Submit → POST `/api/traffic/apply` ou `/manual-case` → toast/refresh.
 - [ ] **Step 5: DecisoesTab** — fetch `/api/traffic/cases?project=`; timeline (lista `.card` compacta): data, pill classe, entidade, razão (truncada), pill outcome (`--success/--warning/--danger` pra sucesso/neutro+inconclusivo/falha; cinza pendente).
 - [ ] **Step 6: PlaybooksTab** — duas seções (Universal / Deste projeto); card por playbook com status pill, regra em texto, botões Aprovar (PATCH status=aprovado) / Editar (textarea inline) / Desativar. Drafts da indução aparecem com banner `.deps-banner`-style "novo playbook induzido — revisar".
-- [ ] **Step 7: AutonomiaTab** — tabela por classe: concordância atual (%), decisões consideradas, modo (pill), sparkline SVG inline (polyline 100×24 das últimas taxas — calcular client-side dos cases vs recs retornados por `/api/traffic/autonomy`), toggle kill switch global (PATCH), botão "Rebaixar" quando graduada.
-- [ ] **Step 8: Sidebar** — adicionar item "Tráfego" (ícone existente de gráfico em `components/icons`) apontando `/trafego`, renderizado só se a flag do tenant estiver on (a page já protege; pro item, expor a flag via prop do layout server-side — seguir como o Sidebar recebe dados hoje).
+- [ ] **Step 7: AutonomiaTab** — tabela por classe: concordância atual (%), decisões consideradas, modo (pill), toggle kill switch global (PATCH), botão "Rebaixar" quando graduada. **SEM sparkline no v1** (codex P3 acatado: execução autônoma plena nem está ligada — mostrar número basta).
+- [ ] **Step 8: Sidebar** — ⚠️ o `Sidebar` atual tem união de tipos `activeView: "empresa" | "campaign"` — **estender a união com `"trafego"`** (e os pontos que fazem switch nela; `npm run typecheck` pega todos) OU adicionar prop opcional `extraNav` — escolher o que tocar MENOS arquivos. Item "Tráfego" (ícone de gráfico existente em `components/icons`) → `/trafego`, renderizado só com a flag on (expor a flag via prop server-side, seguindo como o Sidebar recebe dados hoje).
 - [ ] **Step 9: Verificação visual** — `npm run build` limpo; subir dev (`npm run dev`) e screenshot das 4 abas com dados seed (inserir 1 projeto + 2 recs + 3 cases via SQL no Supabase de teste). **Invocar `/ui-ux-pro-max`** pra review estético contra o design system; aplicar ajustes.
 - [ ] **Step 10: Commit** — `git add -A && git commit -m "feat(traffic): UI /trafego — Hoje, Decisões, Playbooks, Autonomia (design system Magnus)" && git push`
 
@@ -1369,8 +1460,24 @@ Regras: usar SÓ classes CSS existentes (`.card`, `.pill`, `.btn`, `.tabbar`, `.
 
 ---
 
-## Self-review (feito na escrita)
+## Self-review (feito na escrita; emendas pós-codex em 2026-06-11)
 
 - **Cobertura da spec:** §3 modelo de caso → Tasks 2/3/5 · §4 loop → Tasks 9/10/12 · §5 outcome → Task 6/13 · §6 motor → Tasks 5/8/10/11 · §7 autonomia → Tasks 7/12 (guardrail kill_switch no apply; execução autônoma plena fica DESLIGADA no v1 do código — graduação só marca o estado e a UI mostra; escrita autônoma real é flip futuro consciente, decisão da spec §7 "propõe executar") · §8 integração → Tasks 1/4 · §9 UI → Task 14 · §10 validação → Task 16 Step 7 + uso real.
 - **Sem placeholders:** todo step tem código ou comando exato; os steps "mesmo padrão" apontam arquivo-referência existente a LER (não inventar).
 - **Consistência de tipos:** `TrafficClass`/`EntityLevel`/`Guardrails` definidos uma vez (Task 3) e importados; `TrafficDb` métodos nomeados na Task 8 e usados nas 9-13 com as mesmas assinaturas.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | not run (escopo decidido no brainstorm /ceo com Yuri) | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 1 | issues_found → fixed | 24 findings (10 P1 + 9 P2 + 5 P3), 21 aplicados |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | not run | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | not run (UI reusa design system existente; /ui-ux-pro-max na Task 14) | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | — |
+
+**CODEX:** 10 P1 corrigidos no plano (tenantErrorResponse em vez de "401 automático"; tenant-scoping explícito em todo TrafficDb; gate de entidade-no-snapshot antes de escrita Meta; guardrails enforced server-side com getDailyBudget + idempotência; budgetGate antes de chamada paga; assinatura LedgerDB em runDailyDiagnosis; service-client sem server-only pro job tsx; tsx como devDependency; ordem caso→decideRec; RPC search_path='' com operator(public.<=>)). 9 P2 aplicados (policies idempotentes, FKs, assinaturas exatas, validação, testes de route-guard, runtime exports, casesDue escopado, dedup de recs, Sidebar/page composition). P3: 2 acatados (sparkline cortado; Task 11 marcada diferível), 3 rejeitados com razão (spike MCP fica — 30min timeboxed e a spec exige; pgvector fica — núcleo do retrieval da spec, custo trivial; tabela gstack fica — instruções pro executor Claude, não pro codex).
+
+**VERDICT:** CODEX CLEARED após emendas — eng review required (rodar `/plan-eng-review` se o Yuri quiser o gate completo antes de executar; decisões de arquitetura já foram travadas no brainstorm + spec aprovada).
+
+NO UNRESOLVED DECISIONS
