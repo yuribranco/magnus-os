@@ -173,12 +173,13 @@ O gargalo é **Business Verification** (B1) — por isso é o primeiro a dispara
 | Pedir permissão demais | escopo mínimo (2 permissões) — messaging fica pra outra rodada |
 | Data deletion não-funcional no teste do revisor | implementar + testar o callback antes de submeter |
 
-## 9. Decisões pendentes pro Yuri
-1. **Qual app Meta usar:** reaproveitar um existente (ex: o `987622980348211` do Magnus/Meta Ads) ou criar
-   um **app dedicado "MagnusOS Instagram"**? (Recomendo dedicado — isola rate-limit e review do resto.)
-2. **PJ pra Business Verification:** qual entidade/CNPJ entra na verificação?
-3. **Privacy Policy:** estender as páginas legais do companion ou página nova dedicada?
-4. **Manter o paste-token** como caminho admin escondido (fallback) ou remover de vez após o OAuth?
+## 9. Decisões do Yuri — ✅ TODAS TRAVADAS (2026-06-12, /ceo)
+1. **App Meta:** ✅ **app dedicado "MagnusOS Instagram"** (não reusar o `987622980348211` de Ads) — isola rate-limit e review.
+2. **PJ pra Business Verification:** ✅ **CNPJ da Magnus/mentoria** (Yuri junta os docs).
+3. **Privacy Policy:** ✅ **estender as páginas legais do companion** (URL já pública/crawlável; adicionar seção dados-IG + caminho de exclusão).
+4. **Paste-token:** ✅ **manter como caminho admin escondido** (fallback) — OAuth vira o normal, paste fica pra debug/admin.
+
+> **Próximo (frente desbloqueada):** (a) Yuri cria o app Meta dedicado "MagnusOS Instagram" no console (A1, manual) + dispara B1 Business Verification (CNPJ Magnus, caminho crítico). (b) Claude: `/plan-eng-review` da Trilha A → writing-plans → codar A2-A4 (rotas oauth/start+callback+data-deletion, reusa `credentialStore.connect`; UI botão "Conectar com Instagram" + paste escondido) → A5 testar em Standard Access c/ conta Yuri. Testável sem o review.
 
 ---
 
